@@ -19,8 +19,6 @@ public sealed class LicenseFooter : Label
 			Spans =
 			{
 				Link(L10n.Get("lblLicense"), Constants.Links.License),
-				new Span { Text = " · " },
-				Link(Constants.Links.AuthorName, Constants.Links.Website),
 			},
 		};
 	}

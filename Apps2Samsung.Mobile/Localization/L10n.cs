@@ -23,7 +23,7 @@ public static class L10n
 
             var catalog = new LocalizationCatalog();
             var stored = MobileSettings.Language;
-            catalog.SetLanguage(catalog.ResolveInitialLanguage(stored));
+            catalog.SetLanguage("es-ES"); // PlayMix2Samsung es solo en español
 
             // First run: commit the detected language so it stays put once chosen, matching the
             // desktop head (detect once, don't silently follow the OS afterwards).

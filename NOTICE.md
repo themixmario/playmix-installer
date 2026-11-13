@@ -165,6 +165,6 @@ SOFTWARE.
 
 ---
 
-## PlayMix Installer
+## PlayMix2Samsung
 
-PlayMix Installer is a modified version of Apps2Samsung (GPL-3.0-only), changed by Valtecno: PlayMix branding, a catalog with only PlayMix TV, desktop/CLI heads and iOS removed. All original copyright notices above remain in force.
+PlayMix2Samsung is a modified version of Apps2Samsung (GPL-3.0-only), changed by Valtecno: PlayMix branding, a catalog with only PlayMix TV, desktop/CLI heads and iOS removed. All original copyright notices above remain in force.

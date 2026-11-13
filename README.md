@@ -1,4 +1,4 @@
-# PlayMix Installer
+# PlayMix2Samsung
 
 Android app that installs **PlayMix TV** on Samsung Smart TVs (Tizen 3.0 / 2017 or newer): it finds the TV, creates the signing certificate, and installs the latest PlayMix TV package. No PC and no Tizen Studio.
 

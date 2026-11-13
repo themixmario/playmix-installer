@@ -26,18 +26,7 @@
                 <Label Text="{l:Localize lbleasyRight}" FontSize="14" Opacity="0.7"
                        HorizontalTextAlignment="Center" HorizontalOptions="Center" />
 
-                <!-- Ko-fi QR on a white tile -->
-                <Border BackgroundColor="White" Padding="8" StrokeThickness="0"
-                        StrokeShape="RoundRectangle 6" HorizontalOptions="Center">
-                    <Image x:Name="QrImage" WidthRequest="160" HeightRequest="160" Aspect="AspectFit" />
-                </Border>
-
-                <!-- Two equal columns, like the progress sheet's footer: a stack layout never shrinks
-                     its children, so on a phone the wide Ko-fi button pushed Close off the card. -->
-                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" Margin="0,8,0,0">
-                    <Button Grid.Column="0" Text="{l:Localize lblValidation}" Padding="12,12" CornerRadius="12" HeightRequest="48" LineBreakMode="TailTruncation" Clicked="OnKoFiClicked" />
-                    <Button Grid.Column="1" Text="{l:Localize btn_Close}" Style="{StaticResource PlainButton}" Padding="12,12" CornerRadius="12" HeightRequest="48" Clicked="OnCloseClicked" />
-                </Grid>
+                <Button Text="{l:Localize btn_Close}" Padding="12,12" CornerRadius="12" HeightRequest="48" Margin="0,8,0,0" Clicked="OnCloseClicked" />
 
             </VerticalStackLayout>
         </Border>
