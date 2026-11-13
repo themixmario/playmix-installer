@@ -1,0 +1,262 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using Apps2Samsung.Interfaces;
+using Apps2Samsung.Models;
+using Apps2Samsung.Sdb;
+
+namespace Apps2Samsung.Services
+{
+    /// <summary>What a pre-install guard is warning about.</summary>
+    public enum InstallGuardKind
+    {
+        /// <summary>Developer Mode is on but its install service isn't running yet.</summary>
+        RestartRequired,
+        /// <summary>The TV's Developer-Mode IP is on a different subnet than this machine.</summary>
+        SubnetMismatch,
+        /// <summary>The TV reports Developer Mode off.</summary>
+        DeveloperModeOff,
+        /// <summary>The TV's Developer-Mode IP is this machine's IP typed back to front.</summary>
+        DeveloperIpReversed,
+        /// <summary>The TV's Developer-Mode IP points at some other machine.</summary>
+        DeveloperIpMismatch,
+        /// <summary>The "TV" is the Tizen Studio emulator on this machine, whose DUID the
+        /// certificate must list.</summary>
+        EmulatorTarget,
+        /// <summary>The TV's Developer-Mode IP is 127.0.0.1, so the install goes through TV-Store's
+        /// relay on the TV, and that port did not answer: the relay is off or TV-Store too old.</summary>
+        RelayNotAnswering,
+    }
+
+    /// <summary>
+    /// One thing that will most likely make the install fail, phrased for the user. Every guard is a
+    /// Continue/Stop confirmation, never a hard block — a TV can always be misreporting.
+    ///
+    /// <see cref="MessageKey"/> / <see cref="TitleKey"/> are the desktop head's localization keys;
+    /// <see cref="DefaultMessage"/> / <see cref="DefaultTitle"/> carry the same English text for the
+    /// mobile head, which has no localization layer (same split as
+    /// <see cref="TizenDeviceReadiness.RestartInstructions"/>). <see cref="Detail"/> is the measured
+    /// facts behind the guard (IP addresses) — not translatable prose, so both heads append it as-is.
+    /// </summary>
+    public sealed record InstallGuard(
+        InstallGuardKind Kind,
+        string TitleKey,
+        string MessageKey,
+        string DefaultTitle,
+        string DefaultMessage,
+        string? Detail = null)
+    {
+        /// <summary>The English message with the measured facts appended (what the mobile head shows).</summary>
+        public string DefaultMessageWithDetail =>
+            string.IsNullOrEmpty(Detail) ? DefaultMessage : $"{DefaultMessage}\n\n{Detail}";
+    }
+
+    /// <summary>What the guards are evaluated against — supplied by each head from its own settings.</summary>
+    public sealed class InstallGuardOptions
+    {
+        /// <summary>Every local IP this machine/phone answers on. Empty means "unknown": the
+        /// IP-matching guards are then skipped rather than guessed at.</summary>
+        public IReadOnlyCollection<string> LocalIps { get; init; } = Array.Empty<string>();
+
+        /// <summary>The local IP the user picked (desktop NIC selection) or the phone's own IP.
+        /// Used for the subnet comparison (empty skips it) and named as "this device" in the
+        /// IP-mismatch guard instead of the whole <see cref="LocalIps"/> list.</summary>
+        public string? ConfiguredLocalIp { get; init; }
+
+        /// <summary>The desktop's "Reverse IP (for Arabic/Hebrew)" setting: those TVs render the IP
+        /// right-to-left, so the user types it reversed and it is then <i>correct</i>, not a mismatch.</summary>
+        public bool ReversedIpReading { get; init; }
+
+        /// <summary>The Advanced "Skip Developer Mode checks" setting (or the CLI's
+        /// <c>--skip-devmode-check</c>): for testing on TVs that misreport, drops the
+        /// <see cref="InstallGuardKind.RestartRequired"/> and <see cref="InstallGuardKind.DeveloperModeOff"/>
+        /// guards so the install goes straight on to the DUID read and the SDB connect and fails
+        /// there with the real error. The IP, subnet, relay and emulator guards still apply.</summary>
+        public bool SkipDevModeChecks { get; init; }
+    }
+
+    /// <summary>The guards to show, plus the TV IP to install to if evaluation corrected it.</summary>
+    public sealed record InstallGuardResult(IReadOnlyList<InstallGuard> Guards, string? CorrectedTvIp)
+    {
+        public static readonly InstallGuardResult None = new(Array.Empty<InstallGuard>(), null);
+    }
+
+    /// <summary>
+    /// The pre-install checks both heads run before touching a TV: Developer Mode off, a
+    /// Developer-Mode IP pointing at another machine (or typed back to front), a TV on another subnet,
+    /// and a TV that still needs a restart. Each one is the real reason an install would otherwise die
+    /// somewhere deep in the DUID read or the SDB connect, with an error nobody can act on.
+    ///
+    /// Pure classification — no dialogs here. Each head renders <see cref="InstallGuard"/>s its own
+    /// way (localized Avalonia dialogs on desktop, DisplayAlert on mobile) so the two agree on when to
+    /// warn and what to say.
+    /// </summary>
+    public static class InstallGuards
+    {
+        // Same English text as the desktop's en.json entries for these keys, so both heads say the
+        // same thing. Keep the two in sync when either changes.
+        private const string RestartTitleDefault = TizenDeviceReadiness.RestartTitle;
+        private const string SubnetMismatchDefault = "Devices are in different subnets (network)";
+        private const string DeveloperModeRequiredDefault = "Samsung TV is not in developer mode...";
+        private const string DeveloperIpReversedDefault =
+            "IP is in reversed order on the TV, please re-enable developer mode and type your local IP " +
+            "in reversed order. (ex: 192.168.1.2 → 2.1.168.192)";
+        private const string DeveloperIpMismatchDefault =
+            "Samsung Developer mode IP doesn't match this devices local IP, do you wish to continue?";
+        private const string RelayNotAnsweringDefault =
+            "This TV's Developer Mode points at 127.0.0.1, so Apps2Samsung connects through TV-Store's " +
+            "relay on the TV, and that port is not answering. On the TV, open TV-Store, go to Settings " +
+            "and turn on \"Connect from Apps2Samsung\" (TV-Store 0.3.14 or newer). Or set Developer " +
+            "Mode's Host PC IP to this device's address and restart the TV. Continue anyway?";
+        private const string EmulatorTargetDefault =
+            "This TV is the Tizen Studio TV emulator running on this computer. It checks the Samsung " +
+            "certificate exactly like a retail TV, so the distributor certificate must list the " +
+            "emulator's DUID. A certificate generated for a real TV fails here with a certificate " +
+            "error ([118, -12]).\n\nGenerate a new certificate with the emulator selected as the TV " +
+            "first, or continue if the current certificate already lists it.";
+
+        /// <summary>
+        /// Evaluates every guard for <paramref name="device"/>, in the order they should be shown.
+        /// An empty list means nothing looks wrong. Returns no guards for a device whose
+        /// Developer-Mode info was never read (<c>DeveloperIP == null</c>) — there is nothing to
+        /// compare against then.
+        /// </summary>
+        public static InstallGuardResult Evaluate(NetworkDevice? device, InstallGuardOptions options, INetworkService network)
+        {
+            if (device is null)
+                return InstallGuardResult.None;
+
+            var guards = new List<InstallGuard>();
+            string? correctedTvIp = null;
+
+            // 0. The "TV" is this machine, i.e. the Tizen Studio emulator. Checked before the
+            // Developer-Mode guards because the emulator has no REST API: its DeveloperIP is never
+            // read, which is exactly the case the early return below covers.
+            var allLocalIps = string.IsNullOrEmpty(options.ConfiguredLocalIp)
+                ? options.LocalIps
+                : options.LocalIps.Append(options.ConfiguredLocalIp!).ToList();
+            if (TizenEmulator.IsThisMachine(device.IpAddress, allLocalIps))
+            {
+                // Never the TV's own address: with no local IP known that would print 127.0.0.1
+                // as "this device", which reads as a wrong configuration rather than an unknown.
+                var thisDevice = !string.IsNullOrEmpty(options.ConfiguredLocalIp) ? options.ConfiguredLocalIp!
+                               : options.LocalIps.Count > 0 ? string.Join(", ", options.LocalIps)
+                               : "unknown";
+                guards.Add(new InstallGuard(
+                    InstallGuardKind.EmulatorTarget,
+                    "guardEmulatorTitle", "guardEmulatorBody",
+                    "Tizen emulator", EmulatorTargetDefault,
+                    $"TV IP: {device.IpAddress} • this device: {thisDevice}"));
+            }
+
+            if (device.DeveloperIP is null)
+                return new InstallGuardResult(guards, correctedTvIp);
+
+            // 1. Developer Mode on, but its install service isn't up yet — only a restart fixes it.
+            if (!options.SkipDevModeChecks && TizenDeviceReadiness.RequiresRestart(device))
+            {
+                guards.Add(new InstallGuard(
+                    InstallGuardKind.RestartRequired,
+                    "restartRequiredTitle", "restartRequiredBody",
+                    RestartTitleDefault, TizenDeviceReadiness.RestartInstructions));
+            }
+
+            // 1b. Host PC IP 127.0.0.1: the TV takes only loopback, so the install goes through
+            // TV-Store's relay (TV-Store#52). That is a deliberate setting, not a mismatch with this
+            // device, so the IP guards below do not apply; what can be wrong is the relay being off.
+            bool viaRelay = SdbEndpoint.IsLoopback(device.DeveloperIP);
+            if (viaRelay && device.RelayPortOpen == false)
+            {
+                guards.Add(new InstallGuard(
+                    InstallGuardKind.RelayNotAnswering,
+                    "guardRelayTitle", "guardRelayBody",
+                    "TV-Store relay is off", RelayNotAnsweringDefault,
+                    $"TV-Store relay: {device.IpAddress}:{SdbEndpoint.RelayPort(device.IpAddress)}" +
+                    (string.IsNullOrWhiteSpace(device.RelayError) ? "" : $" • TV-Store says: {device.RelayError}")));
+            }
+
+            // 2. TV on another subnet than the local IP the user selected.
+            if (!viaRelay &&
+                !string.IsNullOrEmpty(options.ConfiguredLocalIp) &&
+                !string.IsNullOrEmpty(device.DeveloperIP) &&
+                network.IsDifferentSubnet(options.ConfiguredLocalIp!, device.DeveloperIP!))
+            {
+                guards.Add(new InstallGuard(
+                    InstallGuardKind.SubnetMismatch,
+                    "guardSubnetMismatchTitle", "subnetMismatch",
+                    "Subnet Mismatch", SubnetMismatchDefault,
+                    $"TV Developer Mode IP: {device.DeveloperIP} • this device: {options.ConfiguredLocalIp}"));
+            }
+
+            // 3. The TV itself says Developer Mode is off.
+            if (!options.SkipDevModeChecks && device.DeveloperMode == "0")
+            {
+                guards.Add(new InstallGuard(
+                    InstallGuardKind.DeveloperModeOff,
+                    "guardDeveloperModeTitle", "DeveloperModeRequired",
+                    "Developer Disabled", DeveloperModeRequiredDefault));
+            }
+
+            // 4/5. Developer Mode points at a host that isn't us. Without a local IP to compare
+            // against (offline phone, no usable interface) we can't tell, so we don't guess.
+            var localIps = options.LocalIps;
+            if (viaRelay || localIps.Count == 0 || string.IsNullOrEmpty(device.DeveloperIP))
+                return new InstallGuardResult(guards, correctedTvIp);
+
+            bool ipMismatch = !localIps.Contains(device.DeveloperIP);
+            bool isReversedIp = ipMismatch && localIps.Any(ip => Invert(network, ip) == device.DeveloperIP);
+
+            if (isReversedIp && options.ReversedIpReading)
+            {
+                // Reading the IP right-to-left is exactly what this user's TV asks of them, so the
+                // reversed value is the correct one — install to it instead of warning.
+                ipMismatch = false;
+                correctedTvIp = device.DeveloperIP;
+            }
+            else if (isReversedIp)
+            {
+                guards.Add(new InstallGuard(
+                    InstallGuardKind.DeveloperIpReversed,
+                    "guardIpReversedTitle", "DeveloperIPReversed",
+                    "IP Reversed", DeveloperIpReversedDefault,
+                    $"TV Developer Mode IP: {device.DeveloperIP}"));
+                ipMismatch = false;
+            }
+
+            if (ipMismatch)
+            {
+                // Name the interface the user picked in settings as "this device". Listing every
+                // adapter (Hyper-V/WSL virtual switches, VPNs) reads as if the machine has three IPs
+                // and hides the one that matters. The full list is only the fallback when nothing is
+                // picked, or the picked address no longer exists on this machine.
+                var configured = options.ConfiguredLocalIp;
+                var thisDevice = !string.IsNullOrEmpty(configured) && localIps.Contains(configured!)
+                    ? configured!
+                    : string.Join(", ", localIps);
+                guards.Add(new InstallGuard(
+                    InstallGuardKind.DeveloperIpMismatch,
+                    "guardIpMismatchTitle", "DeveloperIPMismatch",
+                    "IP Mismatch", DeveloperIpMismatchDefault,
+                    $"TV Developer Mode IP: {device.DeveloperIP} • this device: {thisDevice}"));
+            }
+
+            return new InstallGuardResult(guards, correctedTvIp);
+        }
+
+        // InvertIPAddress throws on anything that isn't four dot-separated parts; a local IP that odd
+        // simply can't be the reversed one.
+        private static string? Invert(INetworkService network, string ip)
+        {
+            try
+            {
+                return network.InvertIPAddress(ip);
+            }
+            catch (FormatException ex)
+            {
+                Trace.WriteLine($"[Guards] Can't reverse local IP '{ip}': {ex.Message}");
+                return null;
+            }
+        }
+    }
+}

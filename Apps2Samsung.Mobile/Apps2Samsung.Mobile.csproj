@@ -1,0 +1,109 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<!-- Two targets, one head: Android and iOS share every page and service; only
+		     Platforms/Android and Platforms/iOS differ (MAUI compiles each folder for its own TFM).
+		     The iOS target is added on macOS only: restoring a TFM needs its workload installed, and
+		     the Linux runners (PR build, beta/stable release) have maui-android but no ios, so an
+		     unconditional net10.0-ios would break every Android build. macOS (the Mobile (iOS) CI job,
+		     a Mac dev box) gets both. MacCatalyst/Windows stay out; desktop is the Avalonia app. -->
+		<TargetFrameworks>net10.0-android</TargetFrameworks>
+		<TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('osx'))">net10.0-android;net10.0-ios</TargetFrameworks>
+
+		<!-- Note for MacCatalyst:
+		The default runtime is maccatalyst-x64, except in Release config, in which case the default is maccatalyst-x64;maccatalyst-arm64.
+		When specifying both architectures, use the plural <RuntimeIdentifiers> instead of the singular <RuntimeIdentifier>.
+		The Mac App Store will NOT accept apps with ONLY maccatalyst-arm64 indicated;
+		either BOTH runtimes must be indicated or ONLY macatalyst-x64. -->
+		<!-- For example: <RuntimeIdentifiers>maccatalyst-x64;maccatalyst-arm64</RuntimeIdentifiers> -->
+
+		<OutputType>Exe</OutputType>
+		<RootNamespace>Apps2Samsung.Mobile</RootNamespace>
+		<UseMaui>true</UseMaui>
+		<SingleProject>true</SingleProject>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+
+		<!-- Enable XAML source generation for faster build times and improved performance.
+		     This generates C# code from XAML at compile time instead of runtime inflation.
+		     To disable, remove this line.
+		     For individual files, you can override by setting Inflator metadata:
+		       <MauiXaml Update="MyPage.xaml" Inflator="Default" /> (reverts to defaults: Runtime for Debug, XamlC for Release)
+		       <MauiXaml Update="MyPage.xaml" Inflator="Runtime" /> (force runtime inflation) -->
+		<MauiXamlInflator>SourceGen</MauiXamlInflator>
+
+		<!-- Keep real exception messages in Release. Trimming turns on
+		     System.Resources.UseSystemResourceKeys, which strips the framework's message strings and
+		     renders every exception as its raw resource KEY instead: a message-less Java exception
+		     surfaced as "Exception_WasThrown, Java.Lang.RuntimeException" in the error dialogs, so no
+		     failure reported from a release build could be diagnosed (every one of this head's ~20
+		     "Couldn't … {ex.Message}" dialogs was affected, not just one feature). Costs a little APK
+		     size for the retained resource strings; being able to read a crash is worth more. -->
+		<UseSystemResourceKeys>false</UseSystemResourceKeys>
+
+		<!-- Display name -->
+		<ApplicationTitle>PlayMix Installer</ApplicationTitle>
+
+		<!-- App Identifier -->
+		<ApplicationId>cl.valtecno.playmixinstaller</ApplicationId>
+
+		<!-- Versions. These are placeholders for local and PR builds only: both release
+		     workflows override them on the dotnet publish command line, and
+		     ApplicationVersion (the Android versionCode) is computed by
+		     .github/scripts/android-version-code.sh so it can never go backwards.
+		     A release build verifies the published APK against that value, so raising
+		     the number here has no effect on what users get. -->
+		<ApplicationDisplayVersion>1.0.0</ApplicationDisplayVersion>
+		<ApplicationVersion>1</ApplicationVersion>
+
+		<!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
+		<WindowsPackageType>None</WindowsPackageType>
+
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21.0</SupportedOSPlatformVersion>
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
+		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+		<!-- Keychain access group for SecureStorage (MobileSettings' secrets); see the file. -->
+		<CodesignEntitlements>Platforms\iOS\Entitlements.plist</CodesignEntitlements>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- App Icon: the Apps2Samsung logo on the light grey tile (the Bg token's light value,
+		     Apps2Samsung.Core/Design/DesignTokens.cs): the logo was drawn for a light tile, and the
+		     grey doesn't glow on a dark home screen the way white does. Scaled into the adaptive
+		     icon's safe zone so a round or squircle mask never clips the ring. Android paints the
+		     tile whatever happens; a transparent one is not an option. -->
+		<MauiIcon Include="Resources\AppIcon\appicon.png" Color="#101018" ForegroundScale="0.8" />
+
+		<!-- Splash Screen: logo centered on the same light grey. -->
+		<MauiSplashScreen Include="Resources\Splash\a2s_splash.png" Color="#101018" BaseSize="120,120" />
+
+		<!-- Images -->
+		<MauiImage Include="Resources\Images\*" />
+		<MauiImage Update="Resources\Images\dotnet_bot.png" Resize="True" BaseSize="300,185" />
+		
+		<!-- Custom Fonts -->
+		<MauiFont Include="Resources\Fonts\*" />
+
+		<!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
+		<MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- The shared, UI-agnostic core (cert provisioning, TV network scan, the in-process
+		     ISdbEngine, models). A plain net10.0 library is consumable here and its IL runs on
+		     MonoVM at runtime; it also brings TizenSdb.Core in transitively, resolved to this
+		     head's net10.0-android asset. -->
+		<ProjectReference Include="..\Apps2Samsung.Core\Apps2Samsung.Core.csproj" />
+	</ItemGroup>
+
+</Project>

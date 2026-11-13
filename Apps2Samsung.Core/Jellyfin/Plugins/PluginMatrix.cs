@@ -1,0 +1,91 @@
+﻿using Apps2Samsung.Models;
+using System;
+using System.Collections.Generic;
+
+namespace Apps2Samsung.Helpers.Jellyfin.Plugins
+{
+    public static class PluginMatrix
+    {
+        public static readonly List<PluginMatrixEntry> Matrix =
+        [
+            new PluginMatrixEntry
+            {
+                // Before 9.0 the main script loads its modules from an unnamed list the patch can't
+                // read, so only the main script would reach the app and Jellyfin Enhanced wouldn't start.
+                Name = "Jellyfin Enhanced",
+                FallbackUrls = new(),
+                MinimumVersion = new Version(9, 0, 0, 0)
+            },
+            new PluginMatrixEntry
+            {
+                Name = "Media Bar",
+                FallbackUrls = new(),
+                UseBabel = true
+            },
+            new PluginMatrixEntry
+            {
+                Name = "EditorsChoice",
+                FallbackUrls = new(),
+                UseBabel = false
+            },
+            new PluginMatrixEntry
+            {
+                Name = "Home Screen Sections",
+                FallbackUrls = new(),
+                UseBabel = true
+            },
+            new PluginMatrixEntry
+            {
+                Name = "Plugin Pages",
+                FallbackUrls = new(),
+                UseBabel = true
+            },
+            new PluginMatrixEntry
+            {
+                // Served by the plugin's own controller (anonymous, no sign-in needed). Before 6.0.0.0
+                // the client fetched "/NotifySync/..." relative to the page origin, which inside the
+                // packaged app is not the server, so older installs are skipped. Deliberately no
+                // ServerAssetRule for this one: with File Transformation installed the server's
+                // index.html already carries this very script tag, and a rule would cache and inject
+                // it a second time next to the copy the patch below adds.
+                Name = "NotifySync",
+                FallbackUrls = new(),
+                ExplicitServerFiles = new List<string>
+                {
+                    "/NotifySync/client.js"
+                },
+                MinimumVersion = new Version(6, 0, 0, 0)
+            },
+            new PluginMatrixEntry
+            {
+                // Served by the plugin's own controller (anonymous). From 4.4.2 the script builds
+                // every address with ApiClient.getUrl and handles the remote; older versions are
+                // skipped. No ServerAssetRule, for the same reason as NotifySync: the server's
+                // index.html already carries its tag when File Transformation is installed.
+                Name = "Media Carousel",
+                FallbackUrls = new(),
+                ExplicitServerFiles = new List<string>
+                {
+                    "/MediaCarousel/media-carousel.js"
+                },
+                MinimumVersion = new Version(4, 4, 2, 0)
+            }
+        ];
+        public static readonly List<ServerAssetRule> ServerAssetRules =
+        [
+            new ServerAssetRule(
+                pluginName: "GenericPluginAsset",
+                match: url => url.Contains("/plugins/", StringComparison.OrdinalIgnoreCase),
+                treatAs: ServerAssetKind.PluginAsset),
+
+            // JS Injector's public.js carries the admin's public user scripts, KefinTweaks among them
+            // (JellyfinPluginPatcher patches it after caching). Its tag is "../JavaScriptInjector/public.js".
+            new ServerAssetRule("JavaScript Injector", url => url.Contains("javascriptinjector", StringComparison.OrdinalIgnoreCase), ServerAssetKind.PluginAsset),
+            new ServerAssetRule("KefinTweaks", url => url.Contains("kefin", StringComparison.OrdinalIgnoreCase), ServerAssetKind.PluginAsset),
+            new ServerAssetRule("Media Bar", url => url.Contains("mediabar", StringComparison.OrdinalIgnoreCase), ServerAssetKind.PluginAsset),
+            new ServerAssetRule("Home Screen Sections", url => url.Contains("homescreensections", StringComparison.OrdinalIgnoreCase), ServerAssetKind.PluginAsset),
+        ];
+
+        public static List<PluginMatrixEntry> GetMatrix() => Matrix;
+    }
+}

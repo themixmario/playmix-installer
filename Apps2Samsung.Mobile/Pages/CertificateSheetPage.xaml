@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:l="clr-namespace:Apps2Samsung.Mobile.Localization"
+             xmlns:controls="clr-namespace:Apps2Samsung.Mobile.Controls"
+             xmlns:shapes="clr-namespace:Microsoft.Maui.Controls.Shapes;assembly=Microsoft.Maui.Controls"
+             x:Class="Apps2Samsung.Mobile.Pages.CertificateSheetPage"
+             Shell.NavBarIsVisible="False"
+             BackgroundColor="{DynamicResource BgColor}">
+    <!-- The certificate sheet (#755): shown only when a certificate has to be made, i.e. Samsung
+         sign-in is needed. Four steps (device ID, sign in, create, save), Sign in with Samsung to
+         start, then it fills itself in and closes. The Tizen certificate (#988) uses the same sheet
+         with two steps and no sign-in, and shows the TV's refusal on it when the TV turns out to
+         only take a Samsung one. -->
+    <ScrollView>
+        <VerticalStackLayout Padding="16,8,16,24" Spacing="14">
+            <BoxView WidthRequest="36" HeightRequest="5" CornerRadius="3" HorizontalOptions="Center"
+                     Color="{DynamicResource HairColor}" />
+
+            <Grid ColumnDefinitions="44,*,Auto" ColumnSpacing="12">
+                <Border WidthRequest="44" HeightRequest="44" StrokeThickness="0" StrokeShape="RoundRectangle 11"
+                        BackgroundColor="{DynamicResource AccentColor}">
+                    <shapes:Path Data="M12,3 L19,6 L19,11 C19,15.5 16,19 12,21 C8,19 5,15.5 5,11 L5,6 Z M9,12 L11,14 L15,10"
+                                 Stroke="{DynamicResource OnAccentBrush}" StrokeThickness="2.2" StrokeLineJoin="Round" StrokeLineCap="Round"
+                                 WidthRequest="22" HeightRequest="22" Aspect="Uniform"
+                                 HorizontalOptions="Center" VerticalOptions="Center" />
+                </Border>
+                <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                    <Label Text="{l:Localize lblStepCertificate}" FontSize="17" FontAttributes="Bold" LineBreakMode="TailTruncation" />
+                    <Label x:Name="SubLabel" FontSize="13" TextColor="{DynamicResource MutedColor}" LineBreakMode="TailTruncation" />
+                </VerticalStackLayout>
+                <Border Grid.Column="2" Padding="10,4" StrokeThickness="0" StrokeShape="RoundRectangle 13" VerticalOptions="Center"
+                        BackgroundColor="{DynamicResource AccentSoftColor}">
+                    <Label x:Name="LevelLabel" FontSize="12" FontAttributes="Bold" TextColor="{DynamicResource AccentColor}" />
+                </Border>
+            </Grid>
+
+            <Label x:Name="IntroLabel" Text="{l:Localize certSheetIntro}" FontSize="14" LineHeight="1.3" />
+
+            <Border StrokeThickness="0" StrokeShape="RoundRectangle 12" BackgroundColor="{DynamicResource SurfaceColor}">
+                <controls:StepListView x:Name="Steps" KeepDoneDetails="True" />
+            </Border>
+
+            <!-- A Tizen certificate the TV refused (#988): the TV's own words, and the way to a Samsung one. -->
+            <Border x:Name="RefusedPanel" IsVisible="False" StrokeThickness="0" StrokeShape="RoundRectangle 12" Padding="14,12"
+                    BackgroundColor="{DynamicResource WarnSoftColor}">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                    <shapes:Path Data="M12,3 L2,20 L22,20 Z M12,9 L12,14 M12,17 L12,17.5" Stroke="{DynamicResource WarnBrush}" StrokeThickness="2.2"
+                                 StrokeLineJoin="Round" StrokeLineCap="Round" WidthRequest="22" HeightRequest="22" Aspect="Uniform"
+                                 VerticalOptions="Start" Margin="0,1,0,0" />
+                    <VerticalStackLayout Grid.Column="1" Spacing="4">
+                        <Label Text="{l:Localize certTizenRefusedTitle}" FontSize="15" FontFamily="OpenSansSemibold" TextColor="{DynamicResource WarnColor}" />
+                        <Label x:Name="RefusedBody" FontSize="13" LineHeight="1.35" />
+                    </VerticalStackLayout>
+                </Grid>
+            </Border>
+
+            <VerticalStackLayout x:Name="SignInButtons" Spacing="8">
+                <Button x:Name="PrimaryBtn" Text="{l:Localize lblSignInWithSamsung}" Style="{StaticResource PrimaryButton}"
+                        CornerRadius="12" HeightRequest="50" Clicked="OnSignInClicked" />
+                <!-- Signed in on another device already: its exported certificate replaces the sign-in (#921).
+                     On the Tizen sheet this pair is the way to a Samsung certificate instead. -->
+                <Label x:Name="ImportHint" Text="{l:Localize certSheetImportHint}" FontSize="12" TextColor="{DynamicResource MutedColor}" />
+                <Button x:Name="ImportBtn" Text="{l:Localize lblImportCertificate}" Style="{StaticResource SoftButton}"
+                        CornerRadius="12" HeightRequest="44" Clicked="OnImportClicked" />
+                <Button Text="{l:Localize lblCancel}" BackgroundColor="Transparent" TextColor="{DynamicResource BadColor}"
+                        FontAttributes="Bold" HeightRequest="44" Clicked="OnCancelClicked" />
+            </VerticalStackLayout>
+
+            <!-- After a refusal: Sign in with Samsung instead, or Close and keep the Tizen setting. -->
+            <VerticalStackLayout x:Name="RefusedButtons" Spacing="8" IsVisible="False">
+                <Button Text="{l:Localize lblSignInSamsungInstead}" Style="{StaticResource PrimaryButton}"
+                        CornerRadius="12" HeightRequest="50" Clicked="OnSamsungInsteadClicked" />
+                <Label Text="{l:Localize certTizenRefusedSwitchHint}" FontSize="12" TextColor="{DynamicResource MutedColor}" />
+                <Button Text="{l:Localize btn_Close}" Style="{StaticResource PlainButton}"
+                        CornerRadius="12" HeightRequest="48" Clicked="OnCloseClicked" />
+            </VerticalStackLayout>
+
+            <Button x:Name="CloseBtn" Text="{l:Localize btn_Close}" Style="{StaticResource PlainButton}" IsVisible="False"
+                    CornerRadius="12" HeightRequest="48" Clicked="OnCloseClicked" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

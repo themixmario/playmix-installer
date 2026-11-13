@@ -1,0 +1,655 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
+using Apps2Samsung.Diagnostics;
+using Apps2Samsung.Interfaces;
+using Apps2Samsung.Sdb;
+
+namespace Apps2Samsung.Agent
+{
+    /// <summary>One installed app as the agent's <c>tizen.application.getAppsInfo()</c> reports it.</summary>
+    /// <param name="Show">
+    /// False for an app the platform hides from its launcher. On a hospitality set this is the real
+    /// hidden set — as against the ids the toolbox guesses at.
+    /// </param>
+    public sealed record DebugAgentApp(
+        string Id,
+        string Name,
+        string PackageId,
+        string Version,
+        bool Show,
+        string? IconPath)
+    {
+        public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Id : Name;
+    }
+
+    /// <summary>One running app, from <c>tizen.application.getAppsContext()</c>.</summary>
+    public sealed record DebugAgentContext(string AppId, string ContextId);
+
+    /// <summary>One file in the TV's install staging folder, as the agent lists it.</summary>
+    /// <param name="IsPackage">A .wgt/.tpk/.rpm — what a clear deletes. Anything else in there is left alone.</param>
+    public sealed record DebugAgentStagedFile(string Name, string Path, long Size, DateTimeOffset? Modified, bool IsPackage);
+
+    /// <summary>
+    /// The agent's listing of sdbd's install staging folder (<c>/home/owner/share/tmp/sdk_tools</c>
+    /// and its <c>tmp/</c>). <see cref="Errors"/> carries the platform's words for a folder it would
+    /// not list; a missing <c>tmp/</c> is not one of them.
+    /// </summary>
+    public sealed record DebugAgentStaging(IReadOnlyList<DebugAgentStagedFile> Files, IReadOnlyList<string> Errors)
+    {
+        public IEnumerable<DebugAgentStagedFile> Packages => Files.Where(f => f.IsPackage);
+        public long PackageBytes => Packages.Sum(f => f.Size);
+    }
+
+    /// <summary>What one clear of the staging folder did, file by file.</summary>
+    public sealed record DebugAgentStagingClearResult(
+        IReadOnlyList<DebugAgentStagedFile> Deleted, IReadOnlyList<string> Failed, long FreedBytes);
+
+    /// <summary>What the agent knows about the set it runs on.</summary>
+    public sealed record DebugAgentPlatform(string Agent, string? Tizen, string? Model, string? Firmware, string UserAgent);
+
+    /// <summary>How a launch through the agent ended.</summary>
+    public enum DebugAgentLaunchState
+    {
+        /// <summary>The platform took the launch and an app context for the id appeared afterwards.</summary>
+        Launched,
+
+        /// <summary>
+        /// The platform took the launch, but no context for the id showed up. Either it exited at once,
+        /// or the hotel launcher keeps it off-screen — the TV's screen is the tie-breaker.
+        /// </summary>
+        LaunchedNoContext,
+
+        /// <summary>The platform's error callback fired; <see cref="DebugAgentLaunchResult.ErrorName"/> says why.</summary>
+        Refused,
+
+        /// <summary>
+        /// The agent stopped answering after the launch. The usual cause is another app taking the
+        /// screen and the platform suspending the agent — which, read the right way, is a launch that
+        /// worked. Check the TV, then attach again.
+        /// </summary>
+        AgentUnresponsive,
+    }
+
+    /// <summary>The agent's verdict on one launch, verbatim where the platform gave one.</summary>
+    public sealed record DebugAgentLaunchResult(
+        DebugAgentLaunchState State,
+        string? ErrorName,
+        string? ErrorMessage,
+        IReadOnlyList<DebugAgentContext> Running)
+    {
+        public bool Accepted => State is DebugAgentLaunchState.Launched or DebugAgentLaunchState.LaunchedNoContext;
+    }
+
+    /// <summary>The agent is attached but did not answer an evaluation in time.</summary>
+    public sealed class DebugAgentUnresponsiveException : Exception
+    {
+        public DebugAgentUnresponsiveException(string message) : base(message) { }
+    }
+
+    /// <summary>
+    /// The agent is not on the TV and could not be put there. <see cref="Key"/> is the localization
+    /// key for the status line, resolved by each head like the progress keys.
+    /// </summary>
+    public sealed class DebugAgentInstallException : Exception
+    {
+        public string Key { get; }
+
+        public DebugAgentInstallException(string key, string message) : base(message)
+        {
+            Key = key;
+        }
+    }
+
+    /// <summary>
+    /// The desktop and mobile end of the Apps2Samsung Debug agent: a sideloaded web app on the TV
+    /// that launches other apps from the inside, with <c>tizen.application.launch()</c>, and reports
+    /// what the platform answered (tizen-community-packages#34).
+    /// <para>
+    /// Why an agent at all: every route this app already has to a TV goes through the Smart Hub
+    /// launcher — the remote channel's deep link, the REST endpoint, and SDB's <c>was_execute</c>,
+    /// which resolves an id against the Smart Hub app database and answers <c>launch failed[400]</c>
+    /// for anything not in it. The TV's own menus (the hotel menu, the factory menu, the settings
+    /// app, the store) are not in it, on any set. A sideloaded app <em>is</em>, and from inside one
+    /// the platform's own application manager is reachable. So: install the agent like any package,
+    /// launch it in debug mode (<see cref="TizenAppDebugger"/>), attach over the DevTools protocol
+    /// (<see cref="DevToolsConsole"/>) and evaluate calls on its <c>window.A2S</c> object.
+    /// </para>
+    /// <para>
+    /// Everything the agent returns is JSON; nothing it returns is trusted beyond that. A call that
+    /// gets no answer within <see cref="EvaluateTimeout"/> means the agent is suspended or gone —
+    /// after a launch, that is itself information (see <see cref="DebugAgentLaunchState.AgentUnresponsive"/>).
+    /// </para>
+    /// </summary>
+    public sealed class DebugAgentClient : IAsyncDisposable
+    {
+        /// <summary>The operation a plain app-control launch uses when nothing better is known.</summary>
+        public const string MainOperation = "http://tizen.org/appcontrol/operation/main";
+
+        /// <summary>How many operations the agent's <c>appControls()</c> probes — mirrors its OPERATIONS list.</summary>
+        public const int ProbedOperationCount = 25;
+
+        /// <summary>How long one evaluation may take before the agent counts as unresponsive.</summary>
+        public static readonly TimeSpan EvaluateTimeout = TimeSpan.FromSeconds(8);
+
+        // After launch() reports success the platform needs a moment to create the app's context.
+        private static readonly TimeSpan ContextSettleDelay = TimeSpan.FromMilliseconds(1200);
+
+        private readonly ISdbEngine _sdb;
+        private readonly string _tvIp;
+        private readonly TizenDebugSession _session;
+        private readonly DevToolsConsole _console;
+        private bool _disposed;
+
+        private DebugAgentClient(ISdbEngine sdb, string tvIp, TizenDebugSession session, DevToolsConsole console, string agentVersion)
+        {
+            _sdb = sdb;
+            _tvIp = tvIp;
+            _session = session;
+            _console = console;
+            AgentVersion = agentVersion;
+            _console.Disconnected += reason => Disconnected?.Invoke(reason);
+        }
+
+        /// <summary>The <c>A2S.version</c> the running agent reported.</summary>
+        public string AgentVersion { get; }
+
+        /// <summary>The first agent with <c>A2S.staging()</c> / <c>A2S.clearStaging()</c>.</summary>
+        public static readonly Version StagingSince = new(0, 4, 0);
+
+        /// <summary>
+        /// Whether the agent on the TV can list and clear the staging folder. False for an older agent
+        /// a head without an installer could not update — <see cref="AttachCurrentAsync"/> updates it
+        /// wherever it can.
+        /// </summary>
+        public bool SupportsStaging => Version.TryParse(AgentVersion, out var onTv) && onTv >= StagingSince;
+
+        /// <summary>The first agent with <c>A2S.deleteStaged()</c>, one file of any kind (#681).</summary>
+        public static readonly Version StagedDeleteSince = new(0, 5, 0);
+
+        /// <summary>Whether the agent on the TV can delete a single staged file, package or not.</summary>
+        public bool SupportsStagedDelete => Version.TryParse(AgentVersion, out var onTv) && onTv >= StagedDeleteSince;
+
+        /// <summary>
+        /// True when the TV runs an agent older than the one this build embeds
+        /// (<see cref="DebugAgentPackage.Version"/>). Newer is not outdated: a TV that met a later
+        /// build keeps its agent, since Tizen refuses to install a lower version over it anyway.
+        /// </summary>
+        public bool IsOutdated =>
+            Version.TryParse(AgentVersion, out var onTv)
+            && Version.TryParse(DebugAgentPackage.Version, out var embedded)
+            && onTv < embedded;
+
+        /// <summary>Raised once when the inspector connection ends, off the UI thread.</summary>
+        public event Action<string?>? Disconnected;
+
+        /// <summary>
+        /// Whether the TV lists the agent. Read off <c>vd_applist</c>, the same listing the installed-apps
+        /// view uses — the remote channel's query never answers on the sets this exists for.
+        /// </summary>
+        public static async Task<bool> IsInstalledAsync(ISdbEngine sdb, string tvIp)
+        {
+            ArgumentNullException.ThrowIfNull(sdb);
+            var listed = await sdb.AppsAsync(tvIp).ConfigureAwait(false);
+            return TizenInstalledApps.Parse(listed.Output)
+                .Any(a => string.Equals(a.TizenId, DebugAgentPackage.AppId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// The whole way in, as both heads want it: install the agent when the TV lacks it, attach,
+        /// and when what answers is older than this build's agent, install over it and attach again.
+        /// The version check is what makes a fix in the agent reach a TV that already has one —
+        /// <see cref="IsInstalledAsync"/> alone would keep serving the old copy forever.
+        /// </summary>
+        /// <param name="installWgt">
+        /// The head's installer: path of the .wgt in, its own progress text out, true on success.
+        /// Null when this head cannot install (no certificate flow at hand).
+        /// </param>
+        /// <param name="installReport">Where the installer's own progress text goes (the status line).</param>
+        /// <exception cref="DebugAgentInstallException">Not installed and not installable, or the install failed.</exception>
+        /// <exception cref="InvalidOperationException">As <see cref="AttachAsync"/>.</exception>
+        public static async Task<DebugAgentClient> AttachCurrentAsync(
+            ISdbEngine sdb,
+            string tvIp,
+            Func<string, Action<string>, Task<bool>>? installWgt,
+            Action<string> installReport,
+            IProgress<string>? progress = null,
+            CancellationToken ct = default)
+        {
+            ArgumentNullException.ThrowIfNull(sdb);
+            ArgumentException.ThrowIfNullOrWhiteSpace(tvIp);
+            ArgumentNullException.ThrowIfNull(installReport);
+
+            if (!await IsInstalledAsync(sdb, tvIp).ConfigureAwait(false))
+                await InstallAsync(installWgt, installReport, progress).ConfigureAwait(false);
+
+            var agent = await AttachAsync(sdb, tvIp, progress, ct).ConfigureAwait(false);
+            if (!agent.IsOutdated || installWgt is null)
+                return agent;
+
+            Trace.WriteLine($"[agent] TV runs agent v{agent.AgentVersion}, this build embeds v{DebugAgentPackage.Version}: updating");
+            await agent.DisposeAsync().ConfigureAwait(false);
+            progress?.Report("lblToolboxAgentUpdating");
+            await InstallAsync(installWgt, installReport, progress).ConfigureAwait(false);
+            return await AttachAsync(sdb, tvIp, progress, ct).ConfigureAwait(false);
+        }
+
+        private static async Task InstallAsync(
+            Func<string, Action<string>, Task<bool>>? installWgt, Action<string> installReport, IProgress<string>? progress)
+        {
+            if (installWgt is null)
+                throw new DebugAgentInstallException("lblToolboxAgentNotInstalled", "The debug agent is not installed on this TV, and this head cannot install it.");
+
+            progress?.Report("lblToolboxAgentInstalling");
+            var wgt = await DebugAgentPackage.WriteAsync(DebugAgentPackage.DefaultDirectory).ConfigureAwait(false);
+            if (!await installWgt(wgt, installReport).ConfigureAwait(false))
+                throw new DebugAgentInstallException("lblToolboxAgentInstallFailed", "The debug agent could not be installed on the TV.");
+        }
+
+        /// <summary>
+        /// Starts the agent in debug mode and attaches to it. <paramref name="progress"/> receives
+        /// localization keys, the way <c>RemoteSession</c> reports, so each head shows them in its
+        /// own language.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The TV refused debug mode, the inspector never came up, or what answered is not the agent.</exception>
+        public static async Task<DebugAgentClient> AttachAsync(
+            ISdbEngine sdb, string tvIp, IProgress<string>? progress = null, CancellationToken ct = default)
+        {
+            ArgumentNullException.ThrowIfNull(sdb);
+            ArgumentException.ThrowIfNullOrWhiteSpace(tvIp);
+
+            // Debug mode hands out an inspector port only for the launch it performs itself, so a
+            // running agent has to go first. It may well not be running — that is not a failure.
+            progress?.Report("lblToolboxAgentStopping");
+            try
+            {
+                await sdb.ShellAsync(tvIp, $"0 was_kill {DebugAgentPackage.AppId}").ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[agent] pre-stop failed (continuing): {ex.Message}");
+            }
+
+            progress?.Report("lblToolboxAgentStarting");
+            var session = await TizenAppDebugger.StartAsync(sdb, tvIp, DebugAgentPackage.AppId).ConfigureAwait(false);
+
+            DevToolsConsole? console = null;
+            try
+            {
+                progress?.Report("lblToolboxAgentConnecting");
+                var targets = await DevToolsInspector.ListTargetsAsync(session.LocalPort, ct).ConfigureAwait(false);
+
+                // The agent is one page. Prefer the one that says so, in case the inspector also lists
+                // a service worker or a leftover target from a previous debug session.
+                var target = targets.FirstOrDefault(t => t.Url.EndsWith("index.html", StringComparison.OrdinalIgnoreCase))
+                             ?? targets[0];
+
+                console = new DevToolsConsole();
+                await console.ConnectAsync(target.WebSocketUrl, ct).ConfigureAwait(false);
+
+                var version = await EvaluateWithTimeoutAsync(console, "window.A2S && window.A2S.version", ct).ConfigureAwait(false);
+                // `false` when there is no A2S object on the page at all, a string when there is.
+                var agentVersion = Str(version);
+                if (string.IsNullOrWhiteSpace(agentVersion))
+                {
+                    throw new InvalidOperationException(
+                        $"The page on the TV's inspector is not the Apps2Samsung Debug agent ({target.Title}: {target.Url}).");
+                }
+
+                Trace.WriteLine($"[agent] attached to {DebugAgentPackage.AppId} v{agentVersion} on {tvIp} via local port {session.LocalPort}");
+                return new DebugAgentClient(sdb, tvIp, session, console, agentVersion!);
+            }
+            catch
+            {
+                if (console is not null)
+                    await console.DisposeAsync().ConfigureAwait(false);
+                await session.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
+
+        /// <summary>Platform version, model and firmware as the agent sees them.</summary>
+        public async Task<DebugAgentPlatform> PlatformAsync(CancellationToken ct = default)
+        {
+            var node = await CallAsync("A2S.platform()", ct).ConfigureAwait(false);
+            return new DebugAgentPlatform(
+                Agent: Str(node?["agent"]) ?? AgentVersion,
+                Tizen: Str(node?["tizen"]),
+                Model: Str(node?["model"]),
+                Firmware: Str(node?["firmware"]),
+                UserAgent: Str(node?["userAgent"]) ?? string.Empty);
+        }
+
+        /// <summary>Every app installed on the TV, hidden ones included, sorted by name.</summary>
+        /// <exception cref="InvalidOperationException">The platform refused the listing; the message carries its words.</exception>
+        public async Task<IReadOnlyList<DebugAgentApp>> ListAppsAsync(CancellationToken ct = default)
+        {
+            var node = await CallAsync("A2S.apps()", ct).ConfigureAwait(false);
+            if (node is not JsonArray items)
+                throw PlatformRefused("getAppsInfo", node);
+
+            return items
+                .Select(item => new DebugAgentApp(
+                    Id: Str(item?["id"]) ?? string.Empty,
+                    Name: Str(item?["name"]) ?? string.Empty,
+                    PackageId: Str(item?["packageId"]) ?? string.Empty,
+                    Version: Str(item?["version"]) ?? string.Empty,
+                    Show: item?["show"]?.GetValue<bool>() ?? true,
+                    IconPath: NullIfBlank(Str(item?["iconPath"]))))
+                .Where(a => a.Id.Length > 0)
+                .OrderBy(a => a.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+
+        /// <summary>The app contexts the platform currently has — what is really running.</summary>
+        /// <exception cref="InvalidOperationException">The platform refused the listing; the message carries its words.</exception>
+        public async Task<IReadOnlyList<DebugAgentContext>> RunningAsync(CancellationToken ct = default)
+        {
+            var node = await CallAsync("A2S.running()", ct).ConfigureAwait(false);
+            if (node is not JsonArray items)
+                throw PlatformRefused("getAppsContext", node);
+
+            return items
+                .Select(item => new DebugAgentContext(Str(item?["appId"]) ?? string.Empty, Str(item?["id"]) ?? string.Empty))
+                .Where(c => c.AppId.Length > 0)
+                .ToList();
+        }
+
+        /// <summary>
+        /// The app control operations <paramref name="appId"/> registers for, out of the list the agent
+        /// probes with <c>findAppControl()</c>. Empty means none of them — which is what a bare
+        /// <see cref="LaunchAsync"/> refusal plus an empty list adds up to: no entry point from a user app.
+        /// A non-empty list is the operation to hand <see cref="LaunchControlAsync"/>.
+        /// </summary>
+        public async Task<IReadOnlyList<string>> ProbeAppControlsAsync(string appId, CancellationToken ct = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(appId);
+
+            // Twenty-five sequential IPC round trips on the TV: well past the single-call timeout.
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(45));
+            JsonNode? node;
+            try
+            {
+                node = await _console.EvaluateValueAsync($"A2S.appControls({Js(appId)})", timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw Unresponsive();
+            }
+
+            return (node?["operations"] as JsonArray)?
+                .Select(Str)
+                .Where(op => !string.IsNullOrEmpty(op))
+                .Select(op => op!)
+                .ToList()
+                ?? new List<string>();
+        }
+
+        /// <summary><c>tizen.application.launch(id)</c>, then a look at the app contexts.</summary>
+        public Task<DebugAgentLaunchResult> LaunchAsync(string appId, CancellationToken ct = default) =>
+            LaunchCoreAsync(appId, $"A2S.launch({Js(appId)})", ct);
+
+        /// <summary>
+        /// <c>tizen.application.launchAppControl()</c> aimed at <paramref name="appId"/> explicitly.
+        /// A different entry point into the same app: some apps register for an operation and refuse
+        /// a bare launch, or the other way round.
+        /// </summary>
+        public Task<DebugAgentLaunchResult> LaunchControlAsync(
+            string appId, string operation = MainOperation, CancellationToken ct = default) =>
+            LaunchCoreAsync(appId, $"A2S.launchControl({Js(appId)}, {Js(operation)})", ct);
+
+        private async Task<DebugAgentLaunchResult> LaunchCoreAsync(string appId, string expression, CancellationToken ct)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(appId);
+
+            JsonNode? outcome;
+            try
+            {
+                // A Promise that settles in the platform's success/error callback; the inspector
+                // awaits it, so this is the verdict and not the call returning.
+                outcome = await CallAsync(expression, ct).ConfigureAwait(false);
+            }
+            catch (DebugAgentUnresponsiveException)
+            {
+                return new DebugAgentLaunchResult(DebugAgentLaunchState.AgentUnresponsive, null, null, Array.Empty<DebugAgentContext>());
+            }
+
+            if (outcome?["ok"]?.GetValue<bool>() != true)
+            {
+                return new DebugAgentLaunchResult(
+                    DebugAgentLaunchState.Refused,
+                    Str(outcome?["name"]) ?? "Error",
+                    Str(outcome?["message"]) ?? (outcome is null ? "no answer from the platform" : outcome.ToJsonString()),
+                    Array.Empty<DebugAgentContext>());
+            }
+
+            // Accepted. Whether the app is now up is a separate question the context list answers —
+            // unless the launched app took the screen and the agent got suspended with it.
+            try
+            {
+                await Task.Delay(ContextSettleDelay, ct).ConfigureAwait(false);
+                var running = await RunningAsync(ct).ConfigureAwait(false);
+                var appeared = running.Any(c => string.Equals(c.AppId, appId, StringComparison.OrdinalIgnoreCase));
+                return new DebugAgentLaunchResult(
+                    appeared ? DebugAgentLaunchState.Launched : DebugAgentLaunchState.LaunchedNoContext,
+                    null, null, running);
+            }
+            catch (DebugAgentUnresponsiveException)
+            {
+                return new DebugAgentLaunchResult(DebugAgentLaunchState.AgentUnresponsive, null, null, Array.Empty<DebugAgentContext>());
+            }
+            catch (InvalidOperationException ex) when (ex is not ObjectDisposedException)
+            {
+                // The launch was accepted; only the look at the contexts failed. Say so rather than
+                // turn a platform quirk in getAppsContext() into a refused launch.
+                return new DebugAgentLaunchResult(DebugAgentLaunchState.LaunchedNoContext, "ContextListingFailed", ex.Message, Array.Empty<DebugAgentContext>());
+            }
+        }
+
+        /// <summary>
+        /// What sits in sdbd's install staging folder — every package ever pushed to this TV, since
+        /// sdbd's own <c>0 rmfile</c> deletes nothing on retail firmware. Read-only.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The agent predates staging support, or the platform refused the listing.</exception>
+        public async Task<DebugAgentStaging> ListStagingAsync(CancellationToken ct = default)
+        {
+            RequireStaging();
+            var node = await CallAsync("A2S.staging()", ct).ConfigureAwait(false);
+            if (node?["files"] is not JsonArray files)
+                throw PlatformRefused("staging", node);
+
+            return new DebugAgentStaging(ParseStagedFiles(files), ParseStagingErrors(node["errors"]));
+        }
+
+        /// <summary>
+        /// Deletes the package files in the staging folder, one <c>deleteFile()</c> each, and nothing
+        /// else. On request only: nothing in the install flow calls this.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The agent predates staging support, or the platform refused.</exception>
+        public async Task<DebugAgentStagingClearResult> ClearStagingAsync(CancellationToken ct = default)
+        {
+            RequireStaging();
+
+            // A listing plus one deleteFile round trip per package: past the single-call timeout.
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(45));
+            JsonNode? node;
+            try
+            {
+                node = await _console.EvaluateValueAsync("A2S.clearStaging()", timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw Unresponsive();
+            }
+
+            if (node?["deleted"] is not JsonArray deleted)
+                throw PlatformRefused("clearStaging", node);
+
+            var failed = (node["failed"] as JsonArray)?
+                .Select(f => $"{Str(f?["name"]) ?? Str(f?["path"]) ?? "?"}: {Str(f?["error"]?["name"]) ?? "Error"} {Str(f?["error"]?["message"])}".Trim())
+                .ToList() ?? new List<string>();
+
+            return new DebugAgentStagingClearResult(ParseStagedFiles(deleted), failed, Num(node["freed"]));
+        }
+
+        /// <summary>
+        /// Deletes one file from the staging folder, whatever its kind: the way out for a .zip or an
+        /// .xml another tool left there, which a clear leaves alone (#681). The agent refuses any path
+        /// outside the staging folders. On request only.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The agent predates single-file delete, or the platform refused.</exception>
+        public async Task DeleteStagedFileAsync(DebugAgentStagedFile file, CancellationToken ct = default)
+        {
+            ArgumentNullException.ThrowIfNull(file);
+            if (!SupportsStagedDelete)
+            {
+                throw new InvalidOperationException(
+                    $"The agent on the TV is v{AgentVersion}; deleting a single file needs v{StagedDeleteSince} or later. " +
+                    "Attach again from a build that can install packages so the agent gets updated.");
+            }
+
+            var node = await CallAsync($"A2S.deleteStaged({Js(file.Path)})", ct).ConfigureAwait(false);
+            if (node?["deleted"]?.GetValue<bool>() != true)
+                throw PlatformRefused("deleteStaged", node);
+        }
+
+        private void RequireStaging()
+        {
+            if (!SupportsStaging)
+            {
+                throw new InvalidOperationException(
+                    $"The agent on the TV is v{AgentVersion}; listing the staging folder needs v{StagingSince} or later. " +
+                    "Attach again from a build that can install packages so the agent gets updated.");
+            }
+        }
+
+        private static IReadOnlyList<DebugAgentStagedFile> ParseStagedFiles(JsonArray items) =>
+            items
+                .Select(item => new DebugAgentStagedFile(
+                    Name: Str(item?["name"]) ?? string.Empty,
+                    Path: Str(item?["path"]) ?? string.Empty,
+                    Size: Num(item?["size"]),
+                    Modified: ParseModified(Str(item?["modified"])),
+                    IsPackage: item?["isPackage"]?.GetValue<bool>() ?? false))
+                .Where(f => f.Name.Length > 0)
+                .ToList();
+
+        // Some sets (a 2020 Tizen 5.5 TV, #975) hand tizen.filesystem files a modified time of 0, which
+        // the agent passes on as 1970-01-01T00:00:00Z and a western time zone shows as 1969-12-31.
+        // That is "unknown", not a date: no package was staged before the TV existed.
+        internal static DateTimeOffset? ParseModified(string? text) =>
+            DateTimeOffset.TryParse(text, null, System.Globalization.DateTimeStyles.RoundtripKind, out var m)
+            && m.UtcDateTime >= UnknownBefore
+                ? m
+                : null;
+
+        private static readonly DateTime UnknownBefore = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        private static IReadOnlyList<string> ParseStagingErrors(JsonNode? errors) =>
+            (errors as JsonArray)?
+                .Select(e => $"{Str(e?["path"])}: {Str(e?["name"]) ?? "Error"} {Str(e?["message"])}".Trim())
+                .ToList() ?? new List<string>();
+
+        // A JS number arrives as an integer literal for sizes; anything else is read as a double.
+        private static long Num(JsonNode? node)
+        {
+            if (node is not JsonValue value)
+                return 0;
+            if (value.TryGetValue<long>(out var l))
+                return l;
+            return value.TryGetValue<double>(out var d) ? (long)d : 0;
+        }
+
+        /// <summary>
+        /// Any expression, rendered the way a console shows it — for the ad-hoc box in the toolbox,
+        /// where the next thing worth trying on a set is not yet a button.
+        /// </summary>
+        public async Task<string> EvaluateAsync(string expression, CancellationToken ct = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(EvaluateTimeout);
+            try
+            {
+                return await _console.EvaluateAsync(expression, timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw Unresponsive();
+            }
+        }
+
+        // The agent's functions return plain values and never throw; an exception here is therefore
+        // the inspector's (a syntax slip in the expression) and worth surfacing as such.
+        private async Task<JsonNode?> CallAsync(string expression, CancellationToken ct)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return await EvaluateWithTimeoutAsync(_console, expression, ct).ConfigureAwait(false);
+        }
+
+        private static async Task<JsonNode?> EvaluateWithTimeoutAsync(DevToolsConsole console, string expression, CancellationToken ct)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(EvaluateTimeout);
+            try
+            {
+                return await console.EvaluateValueAsync(expression, timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw Unresponsive();
+            }
+        }
+
+        // The agent answers a listing with an array, or with {error:{name,message,code}} carrying the
+        // platform's own words. Anything else (null, a string) is the agent misbehaving; both are
+        // worth reading in the status line rather than passing off as an empty TV.
+        private static InvalidOperationException PlatformRefused(string call, JsonNode? node)
+        {
+            var error = node?["error"];
+            var detail = error is null
+                ? (node is null ? "no answer" : node.ToJsonString())
+                : $"{Str(error["name"]) ?? "Error"}: {Str(error["message"]) ?? error.ToJsonString()}";
+            return new InvalidOperationException($"The TV's application manager refused {call}(): {detail}");
+        }
+
+        private static DebugAgentUnresponsiveException Unresponsive() => new(
+            $"The debug agent did not answer within {EvaluateTimeout.TotalSeconds:0} s. " +
+            "If another app has just taken the screen, the platform has suspended the agent. Attach again to continue.");
+
+        // A JSON string literal is a valid JavaScript string literal, escapes and all.
+        private static string Js(string value) => JsonSerializer.Serialize(value);
+
+        private static string? Str(JsonNode? node) =>
+            node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+
+        private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+        /// <summary>
+        /// Drops the inspector connection and the tunnel, and stops the agent: it has no business
+        /// staying on screen once the toolbox is done with it. An app it launched is unaffected.
+        /// </summary>
+        public async ValueTask DisposeAsync()
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+
+            try { await _console.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception ex) { Trace.WriteLine($"[agent] console teardown: {ex.Message}"); }
+
+            try { await _session.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception ex) { Trace.WriteLine($"[agent] tunnel teardown: {ex.Message}"); }
+
+            try { await _sdb.ShellAsync(_tvIp, $"0 was_kill {DebugAgentPackage.AppId}").ConfigureAwait(false); }
+            catch (Exception ex) { Trace.WriteLine($"[agent] stop after detach failed: {ex.Message}"); }
+        }
+    }
+}

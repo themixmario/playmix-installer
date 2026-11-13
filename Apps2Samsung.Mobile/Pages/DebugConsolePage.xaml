@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:l="clr-namespace:Apps2Samsung.Mobile.Localization"
+             xmlns:controls="clr-namespace:Apps2Samsung.Mobile.Controls"
+             x:Class="Apps2Samsung.Mobile.Pages.DebugConsolePage"
+             Title="{l:Localize lblDebugConsole}"
+             Shell.NavBarIsVisible="False"
+             BackgroundColor="{DynamicResource BgColor}">
+
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="12" RowSpacing="10">
+
+        <!-- the top bar (#755): Back, the title, and its own button on the right -->
+        <controls:TopBarView Grid.Row="0" Margin="-12,-12,-12,0" Title="{l:Localize lblDebugConsole}" BackText="{l:Localize lblNavBack}"
+                             BackTapped="OnBackClicked" Action="Glyph" Glyph="📤" GlyphTapped="OnShareClicked" />
+
+        <!-- Which app, and whether we're still attached -->
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,*" ColumnSpacing="8">
+            <Border Grid.Column="0" x:Name="StatusPill" BackgroundColor="{DynamicResource MutedColor}" Padding="8,3"
+                    StrokeThickness="0" StrokeShape="RoundRectangle 10" VerticalOptions="Center">
+                <Label x:Name="StatusLabel" Text="{l:Localize statusDebugDetached}" TextColor="{DynamicResource OnAccentColor}"
+                       FontSize="11" FontAttributes="Bold" />
+            </Border>
+            <Label Grid.Column="1" x:Name="SubtitleLabel" FontSize="12" Opacity="0.6"
+                   VerticalOptions="Center" LineBreakMode="TailTruncation" />
+        </Grid>
+
+        <!-- A packaged service: its own console (it runs in its own process, so the app's console
+             never shows it), and a query against an endpoint it serves on the TV's loopback. -->
+        <Grid Grid.Row="2" ColumnDefinitions="*,*,*" ColumnSpacing="8">
+            <Button Grid.Column="0" x:Name="ServiceBtn" Text="{l:Localize lblServiceLog}" FontSize="12"
+                    BackgroundColor="Transparent" BorderWidth="1" CornerRadius="6" Padding="10,6"
+                    BorderColor="{DynamicResource HairColor}"
+                    TextColor="{DynamicResource InkColor}"
+                    Clicked="OnServiceLogClicked" />
+            <Button Grid.Column="1" x:Name="EndpointBtn" Text="{l:Localize lblServiceEndpoint}" FontSize="12"
+                    BackgroundColor="Transparent" BorderWidth="1" CornerRadius="6" Padding="10,6"
+                    BorderColor="{DynamicResource HairColor}"
+                    TextColor="{DynamicResource InkColor}"
+                    Clicked="OnEndpointClicked" />
+            <Button Grid.Column="2" x:Name="NetworkBtn" Text="{l:Localize lblDebugNetwork}" FontSize="12"
+                    BackgroundColor="Transparent" BorderWidth="1" CornerRadius="6" Padding="10,6"
+                    BorderColor="{DynamicResource HairColor}"
+                    TextColor="{DynamicResource InkColor}"
+                    Clicked="OnNetworkClicked" />
+        </Grid>
+
+        <!-- Log output. Dark regardless of theme: it is a console, and the level colours are
+             tuned for a dark ground. The CollectionView is the only scroller here on purpose —
+             nesting it in a ScrollView gives it unbounded height to measure against and it stops
+             scrolling. "monospace" is an Android font-family alias rather than a registered font,
+             which is fine while this head is Android-only. -->
+        <Border Grid.Row="3" BackgroundColor="{DynamicResource GlassColor}" StrokeThickness="1" StrokeShape="RoundRectangle 8"
+                Stroke="{DynamicResource HairBrush}" Padding="2">
+            <CollectionView x:Name="LogList">
+                <CollectionView.EmptyView>
+                    <Label x:Name="EmptyLabel" Text="{l:Localize lblDebugNoOutput}" Padding="14"
+                           TextColor="{DynamicResource GlassMutedColor}" FontSize="12" HorizontalTextAlignment="Center"
+                           VerticalOptions="Center" />
+                </CollectionView.EmptyView>
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid ColumnDefinitions="62,*" ColumnSpacing="8" Padding="8,3">
+                            <Label Grid.Column="0" Text="{Binding Clock}" FontSize="10.5"
+                                   FontFamily="monospace" TextColor="{DynamicResource GlassMutedColor}" VerticalOptions="Start" />
+                            <VerticalStackLayout Grid.Column="1" Spacing="1">
+                                <Label Text="{Binding Source}" FontSize="10" FontFamily="monospace"
+                                       FontAttributes="Bold" TextColor="{DynamicResource GlassInkColor}"
+                                       IsVisible="{Binding HasSource}" LineBreakMode="TailTruncation" />
+                                <Label Text="{Binding Text}" FontSize="12.5" FontFamily="monospace"
+                                       TextColor="{Binding Color}" />
+                                <Label Text="{Binding Origin}" FontSize="10" FontFamily="monospace"
+                                       TextColor="{DynamicResource GlassMutedColor}" IsVisible="{Binding HasOrigin}"
+                                       LineBreakMode="HeadTruncation" />
+                            </VerticalStackLayout>
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+        </Border>
+
+        <!-- Expression prompt -->
+        <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <Border Grid.Column="0" StrokeThickness="1" StrokeShape="RoundRectangle 8"
+                    Stroke="{DynamicResource HairBrush}"
+                    BackgroundColor="{DynamicResource SurfaceColor}" Padding="8,0">
+                <Entry x:Name="EvalEntry" Placeholder="{l:Localize lblDebugEvaluate}" FontFamily="monospace"
+                       FontSize="13" BackgroundColor="Transparent" IsEnabled="False"
+                       ReturnType="Send" Completed="OnEvaluateClicked" />
+            </Border>
+            <Button Grid.Column="1" x:Name="EvalBtn" Text="▸" FontSize="18" IsEnabled="False"
+                    BackgroundColor="Transparent" BorderWidth="1" CornerRadius="6" Padding="14,6"
+                    BorderColor="{DynamicResource HairColor}"
+                    TextColor="{DynamicResource InkColor}"
+                    Clicked="OnEvaluateClicked" />
+        </Grid>
+
+        <!-- Busy overlay, shown while attaching -->
+        <ActivityIndicator Grid.Row="3" x:Name="Busy" IsRunning="False" IsVisible="False"
+                           VerticalOptions="Center" HorizontalOptions="Center" Color="{DynamicResource AccentColor}" />
+
+    </Grid>
+
+</ContentPage>

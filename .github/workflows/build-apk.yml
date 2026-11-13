@@ -1,0 +1,80 @@
+name: Build APK
+
+# Builds the PlayMix Installer APK.
+#  - Run manually (Actions > Build APK > Run workflow): the APK is a downloadable artifact.
+#  - Push a tag like v1.0.0: the APK is also attached to a GitHub release.
+# With the secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS set, the APK is
+# signed with your own key (updates install over older builds). Without them it is signed with a
+# throwaway debug key: fine to try it, not to distribute.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V="1.0.${GITHUB_RUN_NUMBER}"; fi
+          echo "VERSION_NAME=$V" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-dotnet@v6.1.0
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-java@v6.2.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install MAUI Android workload
+        run: dotnet workload install maui-android
+
+      - name: Build APK
+        shell: bash
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          SIGN=()
+          if [ -n "${KS_B64}" ]; then
+            echo "${KS_B64}" | base64 -d > "$PWD/playmix.keystore"
+            SIGN=(-p:AndroidKeyStore=true -p:AndroidSigningKeyStore="$PWD/playmix.keystore"
+                  -p:AndroidSigningKeyAlias="$KS_ALIAS" -p:AndroidSigningStorePass="$KS_PASS" -p:AndroidSigningKeyPass="$KS_PASS")
+            echo "Signing with the repository key."
+          else
+            echo "::warning::No signing secrets: the APK uses a throwaway debug key."
+          fi
+          dotnet publish Apps2Samsung.Mobile/Apps2Samsung.Mobile.csproj \
+            -c Release -f net10.0-android \
+            -p:ApplicationDisplayVersion="$VERSION_NAME" \
+            -p:ApplicationVersion="$GITHUB_RUN_NUMBER" \
+            "${SIGN[@]}" -o publish/android
+          mkdir -p dist
+          APK=$(ls publish/android/*-Signed.apk 2>/dev/null | head -n1 || true)
+          [ -z "$APK" ] && APK=$(ls publish/android/*.apk | head -n1)
+          cp "$APK" "dist/PlayMix-Installer-${VERSION_NAME}.apk"
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: PlayMix-Installer-${{ env.VERSION_NAME }}
+          path: dist/*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.apk --title "PlayMix Installer $VERSION_NAME" --notes "APK para instalar PlayMix TV en tu Samsung." || gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber

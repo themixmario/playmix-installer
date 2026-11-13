@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:l="clr-namespace:Apps2Samsung.Mobile.Localization"
+             xmlns:controls="clr-namespace:Apps2Samsung.Mobile.Controls"
+             x:Class="Apps2Samsung.Mobile.Pages.DeviceInfoPage"
+             Title="{l:Localize lblTvInformation}"
+             Shell.NavBarIsVisible="False"
+             BackgroundColor="{DynamicResource BgColor}">
+
+    <Grid RowDefinitions="Auto,Auto,*" Margin="12" RowSpacing="10">
+
+        <!-- the top bar (#755): Back, the title, and its own button on the right -->
+        <controls:TopBarView Grid.Row="0" Margin="-12,-12,-12,0" Title="{l:Localize lblTvInformation}" BackText="{l:Localize lblNavBack}"
+                             BackTapped="OnBackClicked" Action="Glyph" Glyph="⟳" GlyphTapped="OnRefreshClicked" />
+
+        <!-- Subtitle: which TV / status -->
+        <Label Grid.Row="1" x:Name="CountLabel" FontSize="12" Opacity="0.6" Text="{l:Localize lblLoading}" />
+
+        <!-- Info rows -->
+        <CollectionView Grid.Row="2" x:Name="RowsList">
+            <CollectionView.EmptyView>
+                <Label x:Name="EmptyLabel" Text="{l:Localize lblNoInformationToShow}" Padding="16"
+                       HorizontalTextAlignment="Center" Opacity="0.6" />
+            </CollectionView.EmptyView>
+            <CollectionView.ItemTemplate>
+                <DataTemplate>
+                    <Border Margin="0,4" Padding="12,10" StrokeThickness="1" StrokeShape="RoundRectangle 8"
+                            Stroke="{DynamicResource HairBrush}"
+                            BackgroundColor="{DynamicResource SurfaceColor}">
+                        <Grid ColumnDefinitions="140,*" ColumnSpacing="12" VerticalOptions="Center">
+                            <Label Grid.Column="0" Text="{Binding Label}" FontSize="13" Opacity="0.6"
+                                   VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding Value}" FontSize="13" FontAttributes="Bold"
+                                   VerticalOptions="Center" />
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <!-- Busy overlay -->
+        <ActivityIndicator Grid.Row="2" x:Name="Busy" IsRunning="False" IsVisible="False"
+                           VerticalOptions="Center" HorizontalOptions="Center" Color="{DynamicResource AccentColor}" />
+
+    </Grid>
+
+</ContentPage>

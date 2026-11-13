@@ -1,0 +1,263 @@
+using Apps2Samsung.Configuration;
+using Apps2Samsung.Helpers.Core;
+using Apps2Samsung.Models;
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Apps2Samsung.Helpers.API
+{
+    public class JellyfinApiClient
+    {
+        private readonly HttpClient _httpClient;
+
+        public JellyfinApiClient(HttpClient httpClient)
+        {
+            _httpClient = httpClient;
+        }
+
+        /// <summary>
+        /// Checks if a valid Jellyfin configuration exists with an authenticated user.
+        /// Uses AccessToken from username/password authentication.
+        /// </summary>
+        public static bool IsValidJellyfinConfiguration(IAppConfig s)
+        {
+            return !string.IsNullOrEmpty(s.JellyfinFullUrl) &&
+                   !string.IsNullOrEmpty(s.JellyfinAccessToken) &&
+                   !string.IsNullOrEmpty(s.JellyfinUserId) &&
+                   UrlHelper.IsValidHttpUrl($"{s.JellyfinFullUrl}/Users");
+        }
+
+        /// <summary>
+        /// Checks if the user has a valid authentication (AccessToken + UserId).
+        /// </summary>
+        public static bool HasValidAuthentication(IAppConfig s)
+        {
+            return !string.IsNullOrEmpty(s.JellyfinAccessToken) &&
+                   !string.IsNullOrEmpty(s.JellyfinUserId);
+        }
+
+        public async Task<List<JellyfinPluginInfo>> GetInstalledPluginsAsync(string serverUrl)
+        {
+            var list = new List<JellyfinPluginInfo>();
+            string url = UrlHelper.CombineUrl(serverUrl, "/Plugins");
+
+            try
+            {
+                Trace.WriteLine("Fetching installed plugins from: " + url);
+                var json = await _httpClient.GetStringAsync(url);
+                var parsed = JsonSerializer.Deserialize<List<JellyfinPluginInfo>>(json, JsonSerializerOptionsProvider.Default);
+
+                if (parsed != null)
+                    list.AddRange(parsed);
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                // /Plugins is admin-only. A normal Jellyfin account always gets 401/403 here, so this
+                // is an expected outcome, not a crash: plugin detection is simply unavailable and the
+                // plugin-driven patches are skipped. It used to log a full stack trace, which read like
+                // the real fault in bug reports and sent triage down the wrong path (#702).
+                Trace.WriteLine(
+                    $"[Plugins] {url} -> {(int)ex.StatusCode!.Value}: this Jellyfin account is not an " +
+                    "administrator, so installed plugins can't be read. Plugin patches are skipped.");
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine("Failed to fetch /Plugins: " + ex);
+            }
+
+            return list;
+        }
+
+        public async Task<JellyfinPublicSystemInfo?> GetPublicSystemInfoAsync(string serverUrl)
+        {
+            try
+            {
+                string url = UrlHelper.CombineUrl(serverUrl, "/System/Info/Public");
+                Trace.WriteLine("Fetching Jellyfin public system info from: " + url);
+
+                var json = await _httpClient.GetStringAsync(url);
+                return JsonSerializer.Deserialize<JellyfinPublicSystemInfo>(json, JsonSerializerOptionsProvider.Default);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine("Failed to fetch /System/Info/Public: " + ex);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Quick reachability probe used before baking an address into auto-login credentials.
+        /// The Jellyfin web client probes each stored server address with a 20s timeout on
+        /// startup, so any address we inject that the TV can't actually reach adds ~20s to
+        /// every cold boot. We only ship addresses that answer within a short budget.
+        /// </summary>
+        public async Task<bool> IsAddressReachableAsync(string serverUrl, TimeSpan timeout)
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(timeout);
+                string url = UrlHelper.CombineUrl(serverUrl, "/System/Info/Public");
+                using var resp = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+                return resp.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Sets up HTTP headers for authenticated Jellyfin API requests.
+        /// Uses the AccessToken obtained from username/password authentication.
+        /// </summary>
+        private void SetupHeaders(string accessToken)
+        {
+            ApplyAuthorizationHeader(JellyfinClientIdentity.AuthorizationHeader(accessToken));
+        }
+
+        /// <summary>
+        /// Resets the default headers to the user agent plus the given MediaBrowser Authorization value.
+        /// Added without validation on purpose: the MediaBrowser scheme's comma-separated
+        /// <c>Key="value"</c> parameters are not a standard RFC 7235 credential, so the value must
+        /// reach the wire verbatim rather than through the header parser's reading of it.
+        /// </summary>
+        private void ApplyAuthorizationHeader(string authorizationHeader)
+        {
+            _httpClient.DefaultRequestHeaders.Clear();
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(Constants.Api.UserAgent);
+            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authorizationHeader);
+        }
+
+        /// <summary>
+        /// Authenticates with Jellyfin using username and password.
+        /// Returns the access token, user ID, and admin status on success.
+        /// </summary>
+        public async Task<(string? accessToken, string? userId, bool isAdmin, string? error)> AuthenticateAsync(string serverUrl, string username, string password)
+        {
+            try
+            {
+                serverUrl = UrlHelper.NormalizeServerUrl(serverUrl);
+                var authUrl = $"{serverUrl}/Users/AuthenticateByName";
+
+                // No token yet: the header only carries the client identity. Jellyfin 12 refuses the
+                // login without it and no longer reads the legacy X-Emby-Authorization header (#655).
+                ApplyAuthorizationHeader(JellyfinClientIdentity.AuthorizationHeader());
+
+                var authPayload = new
+                {
+                    Username = username,
+                    Pw = password
+                };
+
+                var json = JsonSerializer.Serialize(authPayload);
+                using var content = new StringContent(json, Encoding.UTF8, Constants.Api.JsonContentType);
+
+                Trace.WriteLine($"[Auth] Authenticating '{username}' at {authUrl} as {JellyfinClientIdentity.Client}/{JellyfinClientIdentity.Device} ({JellyfinClientIdentity.DeviceId})");
+                var response = await _httpClient.PostAsync(authUrl, content);
+                var responseJson = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Trace.WriteLine($"[Auth] Authentication failed: HTTP {(int)response.StatusCode} {response.StatusCode} - {responseJson}");
+                    return (null, null, false, $"Authentication failed: {response.StatusCode}");
+                }
+
+                var authResponse = JsonNode.Parse(responseJson);
+                var accessToken = authResponse?["AccessToken"]?.GetValue<string>();
+                var userId = authResponse?["User"]?["Id"]?.GetValue<string>();
+                var isAdmin = authResponse?["User"]?["Policy"]?["IsAdministrator"]?.GetValue<bool>() ?? false;
+
+                if (string.IsNullOrEmpty(accessToken) || string.IsNullOrEmpty(userId))
+                {
+                    Trace.WriteLine($"[Auth] Authentication succeeded but the response lacks a token or user id: {responseJson}");
+                    return (null, null, false, "Authentication succeeded but Jellyfin did not return an access token or user id.");
+                }
+
+                Trace.WriteLine($"[Auth] User authenticated. IsAdmin: {isAdmin}");
+                return (accessToken, userId, isAdmin, null);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[Auth] Authentication error: {ex}");
+                return (null, null, false, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Loads all Jellyfin users. Requires admin authentication.
+        /// </summary>
+        public async Task<List<JellyfinUser>> LoadUsersAsync(string serverUrl, string accessToken)
+        {
+            var users = new List<JellyfinUser>();
+            try
+            {
+                SetupHeaders(accessToken);
+                serverUrl = UrlHelper.NormalizeServerUrl(serverUrl);
+                var usersUrl = $"{serverUrl}/Users";
+
+                Trace.WriteLine($"[LoadUsers] Fetching users from: {usersUrl}");
+
+                var response = await _httpClient.GetAsync(usersUrl);
+                if (response.IsSuccessStatusCode)
+                {
+                    var responseJson = await response.Content.ReadAsStringAsync();
+                    var usersArray = JsonNode.Parse(responseJson)?.AsArray();
+
+                    if (usersArray != null)
+                    {
+                        foreach (var userNode in usersArray)
+                        {
+                            var user = new JellyfinUser
+                            {
+                                Id = userNode?["Id"]?.GetValue<string>() ?? "",
+                                Name = userNode?["Name"]?.GetValue<string>() ?? ""
+                            };
+
+                            if (!string.IsNullOrEmpty(user.Id) && !string.IsNullOrEmpty(user.Name))
+                            {
+                                users.Add(user);
+                            }
+                        }
+
+                        Trace.WriteLine($"[LoadUsers] Loaded {users.Count} users");
+                    }
+                }
+                else
+                {
+                    Trace.WriteLine($"[LoadUsers] Failed to load users: {response.StatusCode}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[LoadUsers] Error loading users: {ex}");
+            }
+
+            return users;
+        }
+
+        /// <summary>
+        /// Tests if the current server URL is reachable by checking the parameter url endpoint.
+        /// </summary>
+        public async Task<bool> TestServerConnectionAsync(string testUrl)
+        {
+            try
+            {
+                _httpClient.DefaultRequestHeaders.Clear();
+                var response = await _httpClient.GetAsync(testUrl);
+                return response.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+}
