@@ -19,7 +19,7 @@ namespace Apps2Samsung.Update
         private readonly string _owner;
         private readonly string _repo;
 
-        public GitHubUpdateChecker(HttpClient http, string repoOwner = "Apps2Samsung", string repoName = "Apps2Samsung")
+        public GitHubUpdateChecker(HttpClient http, string repoOwner = "themixmario", string repoName = "playmix-installer")
         {
             _http = http;
             _owner = repoOwner;
