@@ -283,16 +283,22 @@ public partial class InstallerPage : ContentPage
 				continue;
 			any = true;
 			CatalogList.Add(GroupTitle(group));
-			var list = new VerticalStackLayout();
-			var first = true;
+			// The gallery: the apps of the group as cards, two per row.
+			var gallery = new Grid
+			{
+				ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) },
+				ColumnSpacing = 10, RowSpacing = 10,
+			};
+			var index = 0;
 			foreach (var release in group.Rows)
 			{
-				if (!first)
-					list.Add(Hairline());
-				first = false;
-				list.Add(CatalogRow(release, SublineFor(release)));
+				var row = index / 2;
+				if (index % 2 == 0)
+					gallery.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+				gallery.Add(CatalogCard(release, SublineFor(release)), index % 2, row);
+				index++;
 			}
-			CatalogList.Add(GroupBorder(list));
+			CatalogList.Add(gallery);
 		}
 		if (!any)
 		{
@@ -407,6 +413,56 @@ public partial class InstallerPage : ContentPage
 		tap.Tapped += async (_, _) => await OpenAppAsync(release, subline);
 		grid.GestureRecognizers.Add(tap);
 		return grid;
+	}
+
+	// A gallery card: big icon, name, short description and an "Instalar" pill; tapping the card
+	// opens the app sheet (version, TV, install). A blocked repository's card is shown faded.
+	private View CatalogCard(GitHubRelease release, string subline)
+	{
+		var tile = AppTile(release, _icons);
+		tile.WidthRequest = 64;
+		tile.HeightRequest = 64;
+		tile.HorizontalOptions = LayoutOptions.Start;
+		tile.StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 16 };
+		var description = string.IsNullOrWhiteSpace(release.Description) ? AppCategories.DisplayName(release.Category, L10n.Get) : release.Description;
+		var pill = new Border
+		{
+			HorizontalOptions = LayoutOptions.Start, Padding = new Thickness(16, 6), StrokeThickness = 0,
+			BackgroundColor = DesignTheme.ColorOf("Accent"),
+			StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 16 },
+			Content = new Label
+			{
+				Text = L10n.Get("lblInstall"), FontSize = 13, FontAttributes = FontAttributes.Bold,
+				TextColor = DesignTheme.ColorOf("OnAccent"),
+			},
+		};
+		var body = new VerticalStackLayout
+		{
+			Spacing = 6,
+			Children =
+			{
+				tile,
+				new Label { Text = release.Name, FontSize = 16, FontAttributes = FontAttributes.Bold, LineBreakMode = LineBreakMode.TailTruncation },
+				new Label
+				{
+					Text = description, FontSize = 12, TextColor = DesignTheme.ColorOf("Muted"),
+					LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 2, MinimumHeightRequest = 32,
+				},
+				pill,
+			},
+		};
+		var card = new Border
+		{
+			StrokeThickness = 0, Padding = new Thickness(14), BackgroundColor = DesignTheme.ColorOf("Surface"),
+			StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 16 },
+			Content = body,
+		};
+		if (CatalogSourceLabels.Line(release.Source, L10n.Get).Kind == SourceLineKind.Blocked)
+			card.Opacity = 0.6;
+		var tap = new TapGestureRecognizer();
+		tap.Tapped += async (_, _) => await OpenAppAsync(release, subline);
+		card.GestureRecognizers.Add(tap);
+		return card;
 	}
 
 	/// <summary>
