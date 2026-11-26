@@ -49,9 +49,14 @@
                             <Label Text="PlayMix TV" FontSize="15" FontAttributes="Bold" />
                             <Label x:Name="PlayMixLine" FontSize="13" TextColor="{DynamicResource MutedColor}" />
                         </VerticalStackLayout>
-                        <Button x:Name="PlayMixBtn" Grid.Column="1" Clicked="OnPlayMixClicked" HeightRequest="40" CornerRadius="20"
-                                Padding="16,0" FontAttributes="Bold" BackgroundColor="{DynamicResource AccentColor}"
-                                TextColor="{DynamicResource OnAccentColor}" VerticalOptions="Center" />
+                        <HorizontalStackLayout Grid.Column="1" Spacing="8" VerticalOptions="Center">
+                            <Button x:Name="PlayMixOpenBtn" IsVisible="False" Text="{l:Localize lblPlayMixOpen}" Clicked="OnPlayMixOpenClicked"
+                                    HeightRequest="40" CornerRadius="20" Padding="16,0" FontAttributes="Bold"
+                                    BackgroundColor="{DynamicResource AccentSoftColor}" TextColor="{DynamicResource AccentColor}" />
+                            <Button x:Name="PlayMixBtn" Clicked="OnPlayMixClicked" HeightRequest="40" CornerRadius="20"
+                                    Padding="16,0" FontAttributes="Bold" BackgroundColor="{DynamicResource AccentColor}"
+                                    TextColor="{DynamicResource OnAccentColor}" />
+                        </HorizontalStackLayout>
                     </Grid>
                 </Border>
 

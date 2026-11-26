@@ -1425,5 +1425,9 @@
   "confirmCertChangedTitle": "Different certificate",
   "confirmCertChanged": "This TV was installed before with another signing certificate. If you go on, the TV may refuse the update, and reinstalling would erase the app's data. To avoid that, import the previous certificate in Settings, Backup and diagnostics.",
   "confirmCertChangedContinue": "Continue",
+  "lblShowSystemApps": "Show system apps",
+  "lblHideSystemApps": "Hide system apps",
+  "lblAppsOnTvCountHidden": "{0} apps · {1} · {2} system apps hidden",
+  "lblPlayMixOpen": "Open",
   "lblNoTvDevSteps": "To install, turn on Developer Mode on the TV:\n1. Home, then Apps.\n2. Type 1 2 3 4 5.\n3. Turn on Developer Mode.\n4. In Host PC IP type {0} and press OK.\n5. Restart the TV."
 }

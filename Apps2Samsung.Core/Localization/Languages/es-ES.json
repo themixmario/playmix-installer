@@ -1425,5 +1425,9 @@
   "confirmCertChangedTitle": "Certificado distinto",
   "confirmCertChanged": "Esta TV se instaló antes con otro certificado de firma. Si sigues, la TV puede rechazar la actualización, y reinstalar borraría los datos de la app. Para evitarlo, importa el certificado anterior en Ajustes, Copia de seguridad y diagnóstico.",
   "confirmCertChangedContinue": "Continuar",
+  "lblShowSystemApps": "Mostrar apps de sistema",
+  "lblHideSystemApps": "Ocultar apps de sistema",
+  "lblAppsOnTvCountHidden": "{0} aplicaciones · {1} · {2} de sistema ocultas",
+  "lblPlayMixOpen": "Abrir",
   "lblNoTvDevSteps": "Para instalar, activa el Modo de Desarrollador en la TV:\n1. Inicio y luego Aplicaciones.\n2. Escribe 1 2 3 4 5.\n3. Activa el Modo de Desarrollador.\n4. En Host PC IP escribe {0} y pulsa OK.\n5. Reinicia la TV."
 }

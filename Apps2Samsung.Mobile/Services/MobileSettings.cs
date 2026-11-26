@@ -190,6 +190,14 @@ public static class MobileSettings
 		set => Preferences.Set(KeyLastTvIp, value ?? string.Empty);
 	}
 
+	private const string KeyHideSystemApps = "hide_system_apps";
+	/// <summary>On the TV tab lists only the apps that can be removed; the TV's own apps stay out of the way.</summary>
+	public static bool HideSystemApps
+	{
+		get => Preferences.Get(KeyHideSystemApps, true);
+		set => Preferences.Set(KeyHideSystemApps, value);
+	}
+
 	private const string KeyFavoriteApps = "favorite_apps";
 	/// <summary>The catalog apps the user starred, by name, ';'-separated (#755 favorites).</summary>
 	public static string FavoriteApps

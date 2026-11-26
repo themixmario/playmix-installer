@@ -115,7 +115,7 @@ public partial class InstalledAppsPage : ContentPage
 			foreach (var (index, path) in paths)
 				if (path is not null)
 					apps[index] = apps[index] with { IconUrl = path };
-			AppsList.ItemsSource = InstalledAppSort.Sort(apps, MobileSettings.InstalledAppOrder).ToList();
+			AppsList.ItemsSource = InstalledAppSort.Sort(Visible(apps), MobileSettings.InstalledAppOrder).ToList();
 		});
 	}
 
@@ -154,6 +154,14 @@ public partial class InstalledAppsPage : ContentPage
 	private async void OnChangeTvClicked(object? sender, EventArgs e) => await TvPicker.ChooseAsync(this, _tv);
 
 	// The ⋯ in the top bar: Refresh, TV information, and the escape hatch for a leftover package.
+	// The TV's own apps (not removable) are left out of the list unless the user asks for them. A TV
+	// that reports none as removable keeps the whole list: nothing could be told apart.
+	private static List<InstalledApp> Visible(IEnumerable<InstalledApp> apps)
+	{
+		var list = apps.ToList();
+		return !MobileSettings.HideSystemApps || !list.Any(a => a.IsRemovable) ? list : list.Where(a => a.IsRemovable || a.HasUpdate).ToList();
+	}
+
 	private async void OnMoreClicked(object? sender, EventArgs e)
 	{
 		var choice = await MoreMenu.ShowAsync(this,
@@ -163,7 +171,14 @@ public partial class InstalledAppsPage : ContentPage
 			new MoreMenuItem(L10n.Get("lblTvInformation"), MoreMenu.IconInfo),
 			// Restore a TV (#1069): this TV's saved list, also after "Not now".
 			new MoreMenuItem(L10n.Get("lblRestoreApps"), MoreMenu.IconRescan),
-			new MoreMenuItem(L10n.Get("lblRemoveLeftover"), MoreMenu.IconDelete, Destructive: true));
+			new MoreMenuItem(L10n.Get("lblRemoveLeftover"), MoreMenu.IconDelete, Destructive: true),
+			new MoreMenuItem(L10n.Get(MobileSettings.HideSystemApps ? "lblShowSystemApps" : "lblHideSystemApps"), MoreMenu.IconInfo));
+		if (choice == 6)
+		{
+			MobileSettings.HideSystemApps = !MobileSettings.HideSystemApps;
+			await ShowSelectedTvAsync(force: true);
+			return;
+		}
 		if (choice == 4)
 		{
 			if (_saved is { Missing.Count: > 0 } saved)
@@ -349,7 +364,7 @@ public partial class InstalledAppsPage : ContentPage
 				_matches[apps[i].TizenId] = match;
 				apps[i] = apps[i] with { CatalogLine = CatalogLine(match), HasUpdate = match.HasUpdate };
 			}
-			AppsList.ItemsSource = InstalledAppSort.Sort(apps, MobileSettings.InstalledAppOrder).ToList();
+			AppsList.ItemsSource = InstalledAppSort.Sort(Visible(apps), MobileSettings.InstalledAppOrder).ToList();
 			_ = ShowCatalogIconsAsync(apps, _tvIp);
 			// The list as it is now, written down for this TV; apps gone since last time are offered again (#1069).
 			SnapshotTv(apps);
@@ -368,7 +383,10 @@ public partial class InstalledAppsPage : ContentPage
 			else
 			{
 				var totalUsed = InstalledApp.FormatSize(apps.Sum(a => a.SizeBytes));
-				SetSubtitle(string.Format(L10n.Get("lblAppsOnTvCount"), apps.Count, totalUsed), TopBarStatus.Ok);
+				var hidden = apps.Count - Visible(apps).Count;
+				SetSubtitle(hidden > 0
+					? string.Format(L10n.Get("lblAppsOnTvCountHidden"), apps.Count - hidden, totalUsed, hidden)
+					: string.Format(L10n.Get("lblAppsOnTvCount"), apps.Count, totalUsed), TopBarStatus.Ok);
 			}
 		}
 		catch (Exception ex)

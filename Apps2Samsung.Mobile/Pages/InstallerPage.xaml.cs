@@ -669,6 +669,8 @@ public partial class InstallerPage : ContentPage
 	private (GitHubRelease Release, Asset Asset)? _playMixTarget;
 	private string? _playMixCheckedIp;
 	private int _playMixToken;
+	// The id PlayMix TV has on the selected TV, once found installed: what "Open on the TV" launches.
+	private string? _playMixTizenId;
 
 	private async Task RefreshPlayMixCardAsync()
 	{
@@ -694,6 +696,7 @@ public partial class InstallerPage : ContentPage
 		string line;
 		string button;
 		var reinstall = false;
+		string? tizenId = null;
 		try
 		{
 			var apps = TizenInstalledApps.ParseOrThrow(await _sdb.AppsAsync(ip));
@@ -708,6 +711,7 @@ public partial class InstallerPage : ContentPage
 				installed = app;
 				break;
 			}
+			tizenId = installed?.TizenId;
 			if (match is null || installed is null)
 			{
 				line = string.Format(L10n.Get("lblPlayMixNotInstalled"), latest);
@@ -738,11 +742,30 @@ public partial class InstallerPage : ContentPage
 			return;
 		_playMixCheckedIp = ip;
 		_playMixTarget = (release, asset);
+		_playMixTizenId = tizenId;
+		PlayMixOpenBtn.IsVisible = tizenId is not null;
 		PlayMixLine.Text = line;
 		PlayMixBtn.Text = button;
 		PlayMixBtn.BackgroundColor = DesignTheme.ColorOf(reinstall ? "AccentSoft" : "Accent");
 		PlayMixBtn.TextColor = DesignTheme.ColorOf(reinstall ? "Accent" : "OnAccent");
 		UpdateTvCard();
+	}
+
+	// Starts PlayMix TV on the TV from the phone.
+	private async void OnPlayMixOpenClicked(object? sender, EventArgs e)
+	{
+		if (_busy || _tv.Ip is not { } ip || _playMixTizenId is not { } id)
+			return;
+		try
+		{
+			var result = await _sdb.LaunchAsync(ip, id);
+			if (result.ExitCode != 0)
+				await DisplayAlert(L10n.Get("lblLaunchFailed"), result.Error, L10n.Get("lblOk"));
+		}
+		catch (Exception ex)
+		{
+			await DisplayAlert(L10n.Get("lblLaunchFailed"), ex.Message, L10n.Get("lblOk"));
+		}
 	}
 
 	private async void OnPlayMixClicked(object? sender, EventArgs e)
