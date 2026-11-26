@@ -194,6 +194,9 @@ public partial class InstallerPage : ContentPage
 
 		RebuildCatalog();
 		_uiReady = true;
+		_playMixCheckedIp = null;
+		if (_tv.HasTv)
+			_ = RefreshPlayMixCardAsync();
 		return result;
 	}
 
@@ -629,6 +632,97 @@ public partial class InstallerPage : ContentPage
 		UpdateTvCard();
 		if (_tv.HasTv && _tv.DebugPortOpen && _tv.Selected is { } tv && TizenVersionCache.TryGet(tv.Ip) is null)
 			_ = ProbeTizenVersionAsync(tv.Ip);
+		if (!_busy && _uiReady && _tv.Ip != _playMixCheckedIp)
+			_ = RefreshPlayMixCardAsync();
+	}
+
+	// PlayMix TV on the selected TV: which version it runs against the catalog's, read over sdb.
+	private (GitHubRelease Release, Asset Asset)? _playMixTarget;
+	private string? _playMixCheckedIp;
+	private int _playMixToken;
+
+	private async Task RefreshPlayMixCardAsync()
+	{
+		var token = ++_playMixToken;
+		var ip = _tv.Ip;
+		// Another TV than the one last read: its card is not shown until this TV has answered.
+		if (_playMixCheckedIp != ip && _playMixTarget is not null)
+		{
+			_playMixTarget = null;
+			UpdateTvCard();
+		}
+		var release = _allReleases.FirstOrDefault(r => r.Name.Contains("PlayMix", StringComparison.OrdinalIgnoreCase) && r.Assets.Count > 0 && r.Source.CanInstall);
+		var asset = release?.Assets.FirstOrDefault(a => a.FileName.EndsWith(".wgt", StringComparison.OrdinalIgnoreCase)) ?? release?.Assets.FirstOrDefault();
+		if (ip is null || release is null || asset is null || !(_tv.DebugPortOpen || MobileSettings.SkipDevModeChecks))
+		{
+			_playMixTarget = null;
+			_playMixCheckedIp = null;
+			UpdateTvCard();
+			return;
+		}
+
+		var latest = asset.PackageVersion ?? release.TagName;
+		string line;
+		string button;
+		var reinstall = false;
+		try
+		{
+			var apps = TizenInstalledApps.ParseOrThrow(await _sdb.AppsAsync(ip));
+			CatalogMatch? match = null;
+			InstalledApp? installed = null;
+			foreach (var app in apps)
+			{
+				var m = InstalledAppUpdates.Find(app, new[] { release }, MobileSettings.PackageIdRenamesJson, MobileSettings.InstalledVariantsJson, ip);
+				if (m is null)
+					continue;
+				match = m;
+				installed = app;
+				break;
+			}
+			if (match is null || installed is null)
+			{
+				line = string.Format(L10n.Get("lblPlayMixNotInstalled"), latest);
+				button = L10n.Get("lblPlayMixInstall");
+			}
+			else if (match.HasUpdate)
+			{
+				line = string.Format(L10n.Get("lblPlayMixUpdateAvail"), latest, installed.Version);
+				button = L10n.Get("lblPlayMixUpdate");
+			}
+			else
+			{
+				line = string.Format(L10n.Get("lblPlayMixUpToDate"), installed.Version);
+				button = L10n.Get("lblPlayMixReinstall");
+				reinstall = true;
+			}
+		}
+		catch (Exception ex)
+		{
+			// The TV's list could not be read: the card still offers the latest one.
+			System.Diagnostics.Trace.WriteLine($"[playmix] Couldn't read installed apps: {ex.Message}");
+			line = string.Format(L10n.Get("lblPlayMixUnknown"), latest);
+			button = L10n.Get("lblPlayMixInstall");
+		}
+
+		// A newer check (another TV, an install) took over while the TV answered.
+		if (token != _playMixToken || _tv.Ip != ip)
+			return;
+		_playMixCheckedIp = ip;
+		_playMixTarget = (release, asset);
+		PlayMixLine.Text = line;
+		PlayMixBtn.Text = button;
+		PlayMixBtn.BackgroundColor = DesignTheme.ColorOf(reinstall ? "AccentSoft" : "Accent");
+		PlayMixBtn.TextColor = DesignTheme.ColorOf(reinstall ? "Accent" : "OnAccent");
+		UpdateTvCard();
+	}
+
+	private async void OnPlayMixClicked(object? sender, EventArgs e)
+	{
+		if (_busy || _playMixTarget is not { } target)
+			return;
+		await InstallAsync(target.Release, target.Asset, null);
+		_playMixCheckedIp = null;
+		_ = RefreshPlayMixCardAsync();
 	}
 
 	/// <summary>The selected TV's Tizen version, once a capability report or a probe said it; null until then.</summary>
@@ -1461,6 +1555,7 @@ public partial class InstallerPage : ContentPage
 	private void UpdateTvCard()
 	{
 		ShowUpdatesRow();
+		PlayMixCard.IsVisible = _playMixTarget is not null && _tv.HasTv && !_busy;
 		var state = _tv.CardState();
 		TopBar.ShowTv(_tv.HasTv || _tv.IsScanning ? state : state with { Name = L10n.Get("lblNoTvFound") });
 		TopBar.TvCount = _tv.Tvs.Count;

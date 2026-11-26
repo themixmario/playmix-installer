@@ -1411,5 +1411,12 @@
   "lblTvListNeedsAttention": "Necesita atención · {0}",
   "lblTvsNeedAttention": "{0} TV encontradas · {1} necesitan atención",
   "lblOtherTvReady": "{0} está lista",
-  "lblOtherTvUse": "Usar esa TV en su lugar"
+  "lblOtherTvUse": "Usar esa TV en su lugar",
+  "lblPlayMixInstall": "Instalar",
+  "lblPlayMixUpdate": "Actualizar",
+  "lblPlayMixReinstall": "Reinstalar",
+  "lblPlayMixNotInstalled": "No está instalada en esta TV (última: v{0})",
+  "lblPlayMixUpdateAvail": "Nueva versión v{0} (instalada: v{1})",
+  "lblPlayMixUpToDate": "Al día (v{0})",
+  "lblPlayMixUnknown": "Última versión: v{0}"
 }

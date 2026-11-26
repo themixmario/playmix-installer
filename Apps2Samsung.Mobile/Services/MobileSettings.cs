@@ -182,6 +182,14 @@ public static class MobileSettings
 		set => Preferences.Set(KeyCertPreference, value ?? CertificatePreferenceAuto);
 	}
 
+	private const string KeyLastTvIp = "last_tv_ip";
+	/// <summary>The IP of the TV used last, tried first at the next start.</summary>
+	public static string LastTvIp
+	{
+		get => Preferences.Get(KeyLastTvIp, string.Empty);
+		set => Preferences.Set(KeyLastTvIp, value ?? string.Empty);
+	}
+
 	private const string KeyFavoriteApps = "favorite_apps";
 	/// <summary>The catalog apps the user starred, by name, ';'-separated (#755 favorites).</summary>
 	public static string FavoriteApps

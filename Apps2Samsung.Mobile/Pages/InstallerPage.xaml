@@ -40,6 +40,21 @@
                     </Grid>
                 </Border>
 
+                <!-- PlayMix TV on the selected TV: not installed, update available or up to date, with
+                     a one-tap Install / Update (the catalog's PlayMix TV, no app sheet in between). -->
+                <Border x:Name="PlayMixCard" IsVisible="False" Padding="14,12" StrokeThickness="0" StrokeShape="RoundRectangle 12"
+                        BackgroundColor="{DynamicResource SurfaceColor}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <VerticalStackLayout Spacing="2" VerticalOptions="Center">
+                            <Label Text="PlayMix TV" FontSize="15" FontAttributes="Bold" />
+                            <Label x:Name="PlayMixLine" FontSize="13" TextColor="{DynamicResource MutedColor}" />
+                        </VerticalStackLayout>
+                        <Button x:Name="PlayMixBtn" Grid.Column="1" Clicked="OnPlayMixClicked" HeightRequest="40" CornerRadius="20"
+                                Padding="16,0" FontAttributes="Bold" BackgroundColor="{DynamicResource AccentColor}"
+                                TextColor="{DynamicResource OnAccentColor}" VerticalOptions="Center" />
+                    </Grid>
+                </Border>
+
                 <!-- How many apps had an update when On the TV last read this TV (#1067); opens On the TV. -->
                 <Border x:Name="UpdatesRow" IsVisible="False" Padding="14,12" StrokeThickness="0" StrokeShape="RoundRectangle 12"
                         BackgroundColor="{DynamicResource OkSoftColor}">

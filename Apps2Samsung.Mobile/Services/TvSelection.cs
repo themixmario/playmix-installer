@@ -118,11 +118,19 @@ public sealed class TvSelection
 	public void Select(int index)
 	{
 		_selected = index >= 0 && index < _tvs.Count ? index : -1;
+		RememberSelected();
 		Status = SelectedStatus();
 		Raise();
 	}
 
 	public void Clear() => Select(-1);
+
+	// The chosen TV's IP is kept, so the next start goes straight back to it.
+	private void RememberSelected()
+	{
+		if (Selected is { } tv)
+			MobileSettings.LastTvIp = tv.Ip;
+	}
 
 	/// <summary>
 	/// Scans the network. Not-ready TVs (REST API answered but the SDB debug port isn't up) are kept:
@@ -154,14 +162,25 @@ public sealed class TvSelection
 			}
 			LocalNetworkBlocked = devices.Count == 0 && _network.LastScanBlockedByOs && OperatingSystem.IsIOS();
 			TraceScanDiagnostics(devices);
-			var keepIp = Ip;
+			// The TV in use stays; else the one used last time (saved IP), else the first found.
+			var keepIp = Ip ?? (string.IsNullOrWhiteSpace(MobileSettings.LastTvIp) ? null : MobileSettings.LastTvIp);
 
 			_tvs.Clear();
 			foreach (var d in devices)
 				_tvs.Add(new TvEntry(d.IpAddress, d.DisplayText, d));
 
+			// The scan found nothing (or not the saved TV): ask the saved IP directly, so the TV used
+			// last time is back without scanning or typing its IP again.
+			if (!string.IsNullOrWhiteSpace(MobileSettings.LastTvIp) && !_tvs.Any(t => t.Ip == MobileSettings.LastTvIp))
+			{
+				var savedIp = MobileSettings.LastTvIp;
+				if (await ProbeTvAsync(savedIp) is { } saved)
+					_tvs.Add(new TvEntry(savedIp, string.Format(L10n.Get("lblTvManualEntry"), savedIp), saved));
+			}
+
 			var keep = keepIp is null ? -1 : _tvs.FindIndex(t => t.Ip == keepIp);
 			_selected = _tvs.Count > 0 ? (keep >= 0 ? keep : 0) : -1;
+			RememberSelected();
 			Status = _tvs.Count == 0
 				? L10n.Get(LocalNetworkBlocked ? "statusLocalNetworkBlocked" : "statusNoTvsFoundHint")
 				: SelectedStatus();
@@ -205,6 +224,7 @@ public sealed class TvSelection
 			idx = _tvs.Count - 1;
 		}
 		_selected = idx;
+		RememberSelected();
 		Status = string.Format(L10n.Get("statusUsingTvAt"), ip);
 		Raise();
 		return true;
