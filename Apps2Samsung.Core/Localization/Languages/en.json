@@ -1419,5 +1419,11 @@
   "lblPlayMixUpdateAvail": "New version v{0} (installed: v{1})",
   "lblPlayMixUpToDate": "Up to date (v{0})",
   "lblPlayMixUnknown": "Latest version: v{0}",
+  "errHintTvUnreachable": "Couldn't reach the TV. Check that it is on, on the same Wi-Fi as this phone, and that Developer Mode is on.",
+  "errHintNoSpace": "The TV is out of space. Free some in Settings, Support, Device Care, Manage Storage.",
+  "errHintCertificate": "The TV rejected the signing certificate. Try regenerating it in Settings, or use the same certificate you installed with before.",
+  "confirmCertChangedTitle": "Different certificate",
+  "confirmCertChanged": "This TV was installed before with another signing certificate. If you go on, the TV may refuse the update, and reinstalling would erase the app's data. To avoid that, import the previous certificate in Settings, Backup and diagnostics.",
+  "confirmCertChangedContinue": "Continue",
   "lblNoTvDevSteps": "To install, turn on Developer Mode on the TV:\n1. Home, then Apps.\n2. Type 1 2 3 4 5.\n3. Turn on Developer Mode.\n4. In Host PC IP type {0} and press OK.\n5. Restart the TV."
 }

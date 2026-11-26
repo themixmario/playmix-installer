@@ -1142,6 +1142,14 @@ public partial class InstallerPage : ContentPage
 			// The catalog entry a colliding package's new id is derived from (#1028); a picked file
 			// is keyed on its own id and name.
 			var catalogKey = custom ? null : PackageIdCollisions.CatalogKey(release, asset);
+			// This TV got its last install signed with another certificate: an update on top of it
+			// can be refused, or end in a reinstall that erases the app's data. Ask before going on.
+			if (_batch is null && CertificateFingerprint.Changed(tvIp, cert.AuthorP12)
+				&& !await ConfirmCertificateChangedAsync())
+			{
+				cancel.Cancel();
+				cancel.Token.ThrowIfCancellationRequested();
+			}
 			PackageIdRename? rename = null;
 			while (true)
 			{
@@ -1181,6 +1189,8 @@ public partial class InstallerPage : ContentPage
 					cancel.Token.ThrowIfCancellationRequested();
 				}
 			}
+
+			CertificateFingerprint.Remember(tvIp, cert.AuthorP12);
 
 			// Which file this TV got (#975): On the TV compares with it and its Update opens the sheet on it.
 			if (!custom)
@@ -1251,7 +1261,7 @@ public partial class InstallerPage : ContentPage
 		catch (Exception ex)
 		{
 			System.Diagnostics.Trace.WriteLine($"[installer] Install failed: {ex}");
-			FailProgress(string.Format(L10n.Get("statusInstallFailed"), ex.Message));
+			FailProgress(InstallErrorHints.Compose(ex));
 			// Re-read the TV so the card says what is wrong now (a relay just switched off, a Host PC
 			// IP changed since the scan), then keep it amber with the failure as its line.
 			_installFailed = true;
@@ -1496,6 +1506,18 @@ public partial class InstallerPage : ContentPage
 				string.Format(L10n.Get("confirmRemoveTitle"), appName),
 				string.Format(L10n.Get("confirmRemove"), appName),
 				L10n.Get("keyRemoveAndInstall"),
+				L10n.Get("lblCancel"));
+		});
+
+	// The certificate is not the one this TV was last installed with.
+	private Task<bool> ConfirmCertificateChangedAsync() =>
+		MainThread.InvokeOnMainThreadAsync(() =>
+		{
+			Page host = _progress ?? (Page)this;
+			return host.DisplayAlert(
+				L10n.Get("confirmCertChangedTitle"),
+				L10n.Get("confirmCertChanged"),
+				L10n.Get("confirmCertChangedContinue"),
 				L10n.Get("lblCancel"));
 		});
 

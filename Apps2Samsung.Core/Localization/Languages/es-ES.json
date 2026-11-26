@@ -1419,5 +1419,11 @@
   "lblPlayMixUpdateAvail": "Nueva versión v{0} (instalada: v{1})",
   "lblPlayMixUpToDate": "Al día (v{0})",
   "lblPlayMixUnknown": "Última versión: v{0}",
+  "errHintTvUnreachable": "No se pudo hablar con la TV. Comprueba que está encendida, en la misma Wi-Fi que este teléfono y con el Modo de Desarrollador activo.",
+  "errHintNoSpace": "La TV no tiene espacio suficiente. Libera espacio desde Ajustes, Soporte, Cuidado del dispositivo, Administrar almacenamiento.",
+  "errHintCertificate": "La TV rechazó el certificado de firma. Prueba a regenerarlo desde Ajustes o usa el mismo certificado con el que instalaste antes.",
+  "confirmCertChangedTitle": "Certificado distinto",
+  "confirmCertChanged": "Esta TV se instaló antes con otro certificado de firma. Si sigues, la TV puede rechazar la actualización, y reinstalar borraría los datos de la app. Para evitarlo, importa el certificado anterior en Ajustes, Copia de seguridad y diagnóstico.",
+  "confirmCertChangedContinue": "Continuar",
   "lblNoTvDevSteps": "Para instalar, activa el Modo de Desarrollador en la TV:\n1. Inicio y luego Aplicaciones.\n2. Escribe 1 2 3 4 5.\n3. Activa el Modo de Desarrollador.\n4. En Host PC IP escribe {0} y pulsa OK.\n5. Reinicia la TV."
 }
