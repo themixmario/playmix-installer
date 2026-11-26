@@ -1418,5 +1418,6 @@
   "lblPlayMixNotInstalled": "Not installed on this TV (latest: v{0})",
   "lblPlayMixUpdateAvail": "New version v{0} (installed: v{1})",
   "lblPlayMixUpToDate": "Up to date (v{0})",
-  "lblPlayMixUnknown": "Latest version: v{0}"
+  "lblPlayMixUnknown": "Latest version: v{0}",
+  "lblNoTvDevSteps": "To install, turn on Developer Mode on the TV:\n1. Home, then Apps.\n2. Type 1 2 3 4 5.\n3. Turn on Developer Mode.\n4. In Host PC IP type {0} and press OK.\n5. Restart the TV."
 }

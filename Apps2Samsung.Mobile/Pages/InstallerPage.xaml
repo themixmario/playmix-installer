@@ -77,6 +77,7 @@
                         <Label x:Name="NoTvTitle" Text="{l:Localize lblNoTvYetTitle}" FontSize="16" FontAttributes="Bold" HorizontalTextAlignment="Center" />
                         <Label x:Name="NoTvHint" Text="{l:Localize lblNoTvYetHint}" FontSize="13" TextColor="{DynamicResource MutedColor}"
                                HorizontalTextAlignment="Center" />
+                        <Label x:Name="NoTvSteps" FontSize="13" TextColor="{DynamicResource MutedColor}" />
                         <HorizontalStackLayout Spacing="8" HorizontalOptions="Center" Margin="0,4,0,0">
                             <Button Text="{l:Localize lblRescan}" Clicked="OnNoTvRescanClicked" HeightRequest="40" CornerRadius="20"
                                     Padding="16,0" FontAttributes="Bold" BackgroundColor="{DynamicResource AccentColor}"

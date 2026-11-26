@@ -1418,5 +1418,6 @@
   "lblPlayMixNotInstalled": "No está instalada en esta TV (última: v{0})",
   "lblPlayMixUpdateAvail": "Nueva versión v{0} (instalada: v{1})",
   "lblPlayMixUpToDate": "Al día (v{0})",
-  "lblPlayMixUnknown": "Última versión: v{0}"
+  "lblPlayMixUnknown": "Última versión: v{0}",
+  "lblNoTvDevSteps": "Para instalar, activa el Modo de Desarrollador en la TV:\n1. Inicio y luego Aplicaciones.\n2. Escribe 1 2 3 4 5.\n3. Activa el Modo de Desarrollador.\n4. En Host PC IP escribe {0} y pulsa OK.\n5. Reinicia la TV."
 }

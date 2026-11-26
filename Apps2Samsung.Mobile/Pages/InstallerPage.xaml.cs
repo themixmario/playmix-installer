@@ -105,6 +105,7 @@ public partial class InstallerPage : ContentPage
 		_tv.Changed -= OnTvChanged;
 		_tv.Changed += OnTvChanged;
 		UpdateTvCard();
+		StartAutoScan();
 		if (_initialized)
 		{
 			// A source of the user's own added or removed under Settings > Installing while this tab
@@ -619,6 +620,34 @@ public partial class InstallerPage : ContentPage
 	{
 		base.OnDisappearing();
 		_tv.Changed -= OnTvChanged;
+		_autoScan?.Stop();
+	}
+
+	// No TV found: look again by itself every few seconds (a handful of times), so a TV switched on
+	// or fixed while this screen is open shows up without tapping Rescan.
+	private IDispatcherTimer? _autoScan;
+	private int _autoScanTries;
+
+	private void StartAutoScan()
+	{
+		_autoScanTries = 0;
+		if (_autoScan is null)
+		{
+			_autoScan = Dispatcher.CreateTimer();
+			_autoScan.Interval = TimeSpan.FromSeconds(12);
+			_autoScan.Tick += async (_, _) =>
+			{
+				if (_busy || _tv.HasTv || _tv.IsScanning || _tv.LocalNetworkBlocked || _autoScanTries >= 8)
+				{
+					if (_tv.HasTv || _autoScanTries >= 8)
+						_autoScan?.Stop();
+					return;
+				}
+				_autoScanTries++;
+				await _tv.ScanAsync();
+			};
+		}
+		_autoScan.Start();
 	}
 
 	// The list, the selection or the scan changed (here or from another tab's ▾): the scan's or the
@@ -1567,6 +1596,8 @@ public partial class InstallerPage : ContentPage
 			TopBar.Status = TopBarStatus.Warn;
 			NoTvTitle.Text = L10n.Get(blocked ? "lblNoTvBlockedTitle" : "lblNoTvYetTitle");
 			NoTvHint.Text = L10n.Get(blocked ? "lblNoTvBlockedHint" : "lblNoTvYetHint");
+			NoTvSteps.IsVisible = !blocked;
+			NoTvSteps.Text = string.Format(L10n.Get("lblNoTvDevSteps"), NetworkInfo.GetLocalIPv4());
 			NoTvAddBtn.IsVisible = !blocked;
 			NoTvSettingsBtn.IsVisible = blocked;
 		}
