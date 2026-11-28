@@ -751,6 +751,16 @@ public partial class InstallerPage : ContentPage
 		UpdateTvCard();
 	}
 
+	private async void OnCopyPhoneIpClicked(object? sender, EventArgs e)
+	{
+		if (NetworkInfo.GetLocalIPv4() is not { } ip)
+			return;
+		await Clipboard.Default.SetTextAsync(ip);
+		PhoneIpLabel.Text = L10n.Get("lblPhoneIpCopied");
+		await Task.Delay(1200);
+		UpdateTvCard();
+	}
+
 	// Starts PlayMix TV on the TV from the phone.
 	private async void OnPlayMixOpenClicked(object? sender, EventArgs e)
 	{
@@ -1630,6 +1640,10 @@ public partial class InstallerPage : ContentPage
 	{
 		ShowUpdatesRow();
 		PlayMixCard.IsVisible = _playMixTarget is not null && _tv.HasTv && !_busy;
+		// The phone's IP is what the TV's Developer Mode asks for (Host PC IP): shown until the TV is ready.
+		var phoneIp = NetworkInfo.GetLocalIPv4();
+		PhoneIpCard.IsVisible = phoneIp is not null && !_busy && (!_tv.HasTv || !_tv.DebugPortOpen);
+		PhoneIpLabel.Text = phoneIp ?? string.Empty;
 		var state = _tv.CardState();
 		TopBar.ShowTv(_tv.HasTv || _tv.IsScanning ? state : state with { Name = L10n.Get("lblNoTvFound") });
 		TopBar.TvCount = _tv.Tvs.Count;

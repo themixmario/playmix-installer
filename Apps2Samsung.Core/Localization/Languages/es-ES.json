@@ -1429,5 +1429,9 @@
   "lblHideSystemApps": "Ocultar apps de sistema",
   "lblAppsOnTvCountHidden": "{0} aplicaciones · {1} · {2} de sistema ocultas",
   "lblPlayMixOpen": "Abrir",
+  "lblPhoneIpTitle": "IP de este teléfono",
+  "lblPhoneIpHint": "Escríbela en el Modo de Desarrollador de la TV (Host PC IP).",
+  "lblPhoneIpCopy": "Copiar",
+  "lblPhoneIpCopied": "Copiada",
   "lblNoTvDevSteps": "Para instalar, activa el Modo de Desarrollador en la TV:\n1. Inicio y luego Aplicaciones.\n2. Escribe 1 2 3 4 5.\n3. Activa el Modo de Desarrollador.\n4. En Host PC IP escribe {0} y pulsa OK.\n5. Reinicia la TV."
 }

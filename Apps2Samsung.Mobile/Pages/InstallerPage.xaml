@@ -40,6 +40,22 @@
                     </Grid>
                 </Border>
 
+                <!-- This phone's IP, for the TV's Developer Mode (Host PC IP): shown while the TV is not ready,
+                     with a Copy button. -->
+                <Border x:Name="PhoneIpCard" IsVisible="False" Padding="14,12" StrokeThickness="0" StrokeShape="RoundRectangle 12"
+                        BackgroundColor="{DynamicResource SurfaceColor}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <VerticalStackLayout Spacing="2" VerticalOptions="Center">
+                            <Label Text="{l:Localize lblPhoneIpTitle}" FontSize="13" TextColor="{DynamicResource MutedColor}" />
+                            <Label x:Name="PhoneIpLabel" FontSize="22" FontAttributes="Bold" />
+                            <Label Text="{l:Localize lblPhoneIpHint}" FontSize="12" TextColor="{DynamicResource MutedColor}" />
+                        </VerticalStackLayout>
+                        <Button Grid.Column="1" Text="{l:Localize lblPhoneIpCopy}" Clicked="OnCopyPhoneIpClicked" HeightRequest="40"
+                                CornerRadius="20" Padding="16,0" FontAttributes="Bold" VerticalOptions="Center"
+                                BackgroundColor="{DynamicResource AccentColor}" TextColor="{DynamicResource OnAccentColor}" />
+                    </Grid>
+                </Border>
+
                 <!-- PlayMix TV on the selected TV: not installed, update available or up to date, with
                      a one-tap Install / Update (the catalog's PlayMix TV, no app sheet in between). -->
                 <Border x:Name="PlayMixCard" IsVisible="False" Padding="14,12" StrokeThickness="0" StrokeShape="RoundRectangle 12"

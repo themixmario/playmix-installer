@@ -1429,5 +1429,9 @@
   "lblHideSystemApps": "Hide system apps",
   "lblAppsOnTvCountHidden": "{0} apps · {1} · {2} system apps hidden",
   "lblPlayMixOpen": "Open",
+  "lblPhoneIpTitle": "This phone's IP",
+  "lblPhoneIpHint": "Type it in the TV's Developer Mode (Host PC IP).",
+  "lblPhoneIpCopy": "Copy",
+  "lblPhoneIpCopied": "Copied",
   "lblNoTvDevSteps": "To install, turn on Developer Mode on the TV:\n1. Home, then Apps.\n2. Type 1 2 3 4 5.\n3. Turn on Developer Mode.\n4. In Host PC IP type {0} and press OK.\n5. Restart the TV."
 }
